@@ -128,6 +128,7 @@ char* getnamefromip(char* ip) {
 }
 int receive_icmp_response(SOCKET sock) {
 	
+	int first_response_not_received = 0;
 	
 	u_char rec_buf[MAX_REPLY_SIZE];  /* this buffer starts gethostname an IP header */
 	
@@ -171,8 +172,7 @@ int receive_icmp_response(SOCKET sock) {
 		if (recv < 56) {
 			printf("Discarding Packet as Size <56 ");
 			continue;
-		}
-		
+		}		
 		if (router_icmp_hdr->type == ICMP_TTL_EXPIRED && router_icmp_hdr->code == (u_char)0)
 		{
 			int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
@@ -196,18 +196,25 @@ int receive_icmp_response(SOCKET sock) {
 					ping_result.rtt = ((double)(timeGetTime() - time_packets_sent[sequence])/(1e3));
 					responses[sequence] = ping_result;
 					printf("<-- sequence %d, ip_address %s, id %d, host %s, rtt %.3f \n", sequence, host_name->h_name, orig_icmp_hdr->id, host,responses[sequence].rtt);
-
+					if (sequence == first_response_not_received) {
+						first_response_not_received++;
+					}
 				}
 			}
-		}else if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
-			return 1;
+		}
+		else if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
+			int sequence = orig_icmp_hdr->seq;
+			if (orig_icmp_hdr->id == GetCurrentProcessId()) {
+				if (sequence >= first_response_not_received) {
+					printf("Received echo reply from a router which is at some hops away. All previous are already computed\n");
+					return 1;
+				}
+			}
 		}
 
 
-	}
+	}	
 
-	
-	return 1;
 }
 int main(int argc, char *argv[]){
 		
