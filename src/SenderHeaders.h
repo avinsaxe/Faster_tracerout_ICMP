@@ -54,4 +54,14 @@ public:
 	u_short seq;
 };
 #pragma pack(pop)
+
+
+class Ping_Results {
+public:
+	int ttl;
+	char* host_name;
+	char* ip;
+	double rtt;
+	int num_probes;
+};
 /* now restore the previous packing state */

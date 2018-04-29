@@ -20,6 +20,10 @@ using namespace std;
 
 
 //href:// taken from HW1 submission of my own code
+
+vector<Ping_Results> responses(30);
+vector<long> time_packets_sent(30);
+
 sockaddr_in fetchServer(string hostName)
 {
 	struct sockaddr_in server;
@@ -126,42 +130,80 @@ int receive_icmp_response(SOCKET sock) {
 	
 	
 	u_char rec_buf[MAX_REPLY_SIZE];  /* this buffer starts gethostname an IP header */
-	int recv=recvfrom(sock, (char*)rec_buf, MAX_REPLY_SIZE, 0, NULL, NULL);
-	if (recv == SOCKET_ERROR) {
-		printf("Error in receive %d \n",WSAGetLastError());
-		return recv;
-	}
 	
 	IPHeader *router_ip_hdr = (IPHeader *)rec_buf;
 	ICMPHeader *router_icmp_hdr = (ICMPHeader *)(router_ip_hdr + 1);
 	IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
 	ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
 
-	if (router_icmp_hdr->type ==  ICMP_TTL_EXPIRED && router_icmp_hdr->code == (u_char)0)
-	{
-		int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
-		//cout << "Sequence Received " << sequence << endl;
-		if (orig_ip_hdr->proto == (u_char)1)
+	long rto = 500000;  //starting rto is 500 ms i.e. 500000 microseconds
+	fd_set fd;
+	
+	struct timeval timeout;
+	timeout.tv_sec = (long)((double)rto/1e6);
+	timeout.tv_usec = rto;
+	
+	
+	while (true) {
+		timeout.tv_sec = (long)((double)rto / 1e6);
+		timeout.tv_usec = rto;
+		FD_ZERO(&fd);
+		FD_SET(sock, &fd);
+
+		int totalSizeOnSelect = select(0, &fd, NULL, NULL, &timeout);
+		if (totalSizeOnSelect == SOCKET_ERROR) {
+			printf("Select failed with %d \n", WSAGetLastError());
+			return SOCKET_ERROR;
+		}
+		if (totalSizeOnSelect < 0) {
+			printf("failed select with %d\n", WSAGetLastError());
+			return SOCKET_ERROR;
+		}
+		if (totalSizeOnSelect == 0) {
+			printf("Total Size on select %d\n", totalSizeOnSelect);
+			continue;
+		}
+		int recv = recvfrom(sock, (char*)rec_buf, MAX_REPLY_SIZE, 0, NULL, NULL);
+		if (recv == SOCKET_ERROR) {
+			printf("Error in receive %d \n", WSAGetLastError());
+			return recv;
+		}
+		if (recv < 56) {
+			printf("Discarding Packet as Size <56 ");
+			continue;
+		}
+		if (router_icmp_hdr->type == ICMP_TTL_EXPIRED && router_icmp_hdr->code == (u_char)0)
 		{
-			// check if process ID matches
-			if (orig_icmp_hdr->id == GetCurrentProcessId())
+			int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
+												 //cout << "Sequence Received " << sequence << endl;
+			if (orig_ip_hdr->proto == (u_char)1)
 			{
-				//printf("Yes here\n");
-				
-				u_long ip_address_of_router = router_ip_hdr->source_ip;
-				sockaddr_in dns_sock;
-				dns_sock.sin_addr.s_addr = ip_address_of_router;
-				char* ip = inet_ntoa(dns_sock.sin_addr);
-				hostent *host_name = gethostbyname(ip);
-				char *host=getnamefromip(ip);
-				printf("<-- sequence %d, ip_address %s, id %d  %s\n", sequence, host_name->h_name, orig_icmp_hdr->id, host);
-				//cout << " IP Address of Router " << ip_address_of_router << endl;
-				// take router_ip_hdr->source_ip and
-				// initiate a DNS lookup
+				// check if process ID matches
+				if (orig_icmp_hdr->id == GetCurrentProcessId())
+				{
+					u_long ip_address_of_router = router_ip_hdr->source_ip;
+					sockaddr_in dns_sock;
+					dns_sock.sin_addr.s_addr = ip_address_of_router;
+					char* ip = inet_ntoa(dns_sock.sin_addr);
+					hostent *host_name = gethostbyname(ip);
+					char *host = getnamefromip(ip);
+					printf("<-- sequence %d, ip_address %s, id %d  %s\n", sequence, host_name->h_name, orig_icmp_hdr->id, host);
+
+					Ping_Results ping_result;
+					ping_result.ip = host_name->h_name;
+					ping_result.host_name = host;
+					ping_result.ttl = sequence;  //sequence number of packet sent
+					ping_result.rtt = ((double)(timeGetTime() - time_packets_sent[sequence])/(1e3));
+					responses[sequence] = ping_result;
+					
+				}
 			}
 		}
+
+
 	}
 
+	
 	return 1;
 }
 int main(int argc, char *argv[]){
@@ -176,6 +218,9 @@ int main(int argc, char *argv[]){
 		cout << "Main:\t WSAStartup Failed " << WSAGetLastError() << endl;
 		return 1;
 	}
+
+	
+	
 	// ********IP ADDRESS FROM HOST *****************
 	string destination_ip= argv[1];
 
@@ -208,17 +253,13 @@ int main(int argc, char *argv[]){
 	
 
 	//************SEND ICMP BUFFER******************************
-	//send all the icmp packets immediately
+	//send all the icmp packets immediately (30 packets)
 	for (int ttl = 0; ttl < 30; ttl++) {
-		for (int j = 0; j < 3; j++) {
+			time_packets_sent[ttl] = timeGetTime();
 			send_icmp_packet(ttl, sock, remote);
-		}
 	}
 	//int send_status=send_icmp_packet(2,sock,remote);
-	for (int i = 0; i < 30; i++)
-	{
-		int receive_status = receive_icmp_response(sock);
-	}
+	receive_icmp_response(sock);
 
 }
 
