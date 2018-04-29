@@ -172,6 +172,7 @@ int receive_icmp_response(SOCKET sock) {
 			printf("Discarding Packet as Size <56 ");
 			continue;
 		}
+		
 		if (router_icmp_hdr->type == ICMP_TTL_EXPIRED && router_icmp_hdr->code == (u_char)0)
 		{
 			int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
@@ -187,17 +188,19 @@ int receive_icmp_response(SOCKET sock) {
 					char* ip = inet_ntoa(dns_sock.sin_addr);
 					hostent *host_name = gethostbyname(ip);
 					char *host = getnamefromip(ip);
-					printf("<-- sequence %d, ip_address %s, id %d  %s\n", sequence, host_name->h_name, orig_icmp_hdr->id, host);
-
+					
 					Ping_Results ping_result;
 					ping_result.ip = host_name->h_name;
 					ping_result.host_name = host;
 					ping_result.ttl = sequence;  //sequence number of packet sent
 					ping_result.rtt = ((double)(timeGetTime() - time_packets_sent[sequence])/(1e3));
 					responses[sequence] = ping_result;
-					
+					printf("<-- sequence %d, ip_address %s, id %d, host %s, rtt %.3f \n", sequence, host_name->h_name, orig_icmp_hdr->id, host,responses[sequence].rtt);
+
 				}
 			}
+		}else if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
+			return 1;
 		}
 
 
