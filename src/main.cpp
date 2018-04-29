@@ -78,8 +78,11 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 	icmp->code = 0;
 
 	// set up ID/SEQ fields as needed todo
-	icmp->id = (u_short)GetCurrentProcessId();
+	icmp->id = (u_short)GetCurrentProcessId(); //id is same for all packets. This is for checking validity of the packet
 	icmp->seq = ttl;
+	IPHeader *ip_h = (IPHeader* )((ICMPHeader*)send_buf + 1);
+	ip_h->ttl = ttl;
+
 	// initialize checksum to zero
 	/* calculate the checksum */
 	int packet_size = sizeof(ICMPHeader); // 8 bytes
@@ -91,6 +94,7 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 		exit(-1);
 	}
 	//use regular sendto on the above packet
+	printf("--> id %d, sequence %d, ttl %d\n\n", icmp->id, icmp->seq, ip_h->ttl);
 	int sendtostatus = sendto(sock, (char*)send_buf, sizeof(ICMPHeader), 0, (SOCKADDR *)&remote, sizeof(remote));
 	if (sendtostatus == SOCKET_ERROR) {
 		printf("WSAERROR  %d \n", WSAGetLastError());
@@ -99,6 +103,25 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 	return sendtostatus;
 }
 
+
+char* getnamefromip(char* ip) {
+	//href:// msdn https://msdn.microsoft.com/en-us/library/windows/desktop/ms738532(v=vs.85).aspx
+	DWORD dwRetval;
+	struct sockaddr_in sock_addr;
+	char hostname[NI_MAXHOST];
+	char servInfo[NI_MAXSERV];
+	u_short port = 22191;
+	sock_addr.sin_family = AF_INET;
+	sock_addr.sin_addr.s_addr = inet_addr(ip);
+	sock_addr.sin_port = htons(port);
+	dwRetval = getnameinfo((struct sockaddr *) &sock_addr,sizeof(struct sockaddr),hostname,NI_MAXHOST, servInfo, NI_MAXSERV, NI_NUMERICSERV);
+	if (dwRetval != 0) {
+		return "";
+	}
+	else {
+		return hostname;
+	}
+}
 int receive_icmp_response(SOCKET sock) {
 	
 	
@@ -108,22 +131,31 @@ int receive_icmp_response(SOCKET sock) {
 		printf("Error in receive %d \n",WSAGetLastError());
 		return recv;
 	}
-	cout << "RECEIVE " << recv << endl;
 	
 	IPHeader *router_ip_hdr = (IPHeader *)rec_buf;
 	ICMPHeader *router_icmp_hdr = (ICMPHeader *)(router_ip_hdr + 1);
 	IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
 	ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
 
-
-	if (router_icmp_hdr->type == (u_char)11 && router_icmp_hdr->code == (u_char)0)
+	if (router_icmp_hdr->type ==  ICMP_TTL_EXPIRED && router_icmp_hdr->code == (u_char)0)
 	{
+		int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
+		//cout << "Sequence Received " << sequence << endl;
 		if (orig_ip_hdr->proto == (u_char)1)
 		{
 			// check if process ID matches
 			if (orig_icmp_hdr->id == GetCurrentProcessId())
 			{
-				printf("Yes here\n");
+				//printf("Yes here\n");
+				
+				u_long ip_address_of_router = router_ip_hdr->source_ip;
+				sockaddr_in dns_sock;
+				dns_sock.sin_addr.s_addr = ip_address_of_router;
+				char* ip = inet_ntoa(dns_sock.sin_addr);
+				hostent *host_name = gethostbyname(ip);
+				char *host=getnamefromip(ip);
+				printf("<-- sequence %d, ip_address %s, id %d  %s\n", sequence, host_name->h_name, orig_icmp_hdr->id, host);
+				//cout << " IP Address of Router " << ip_address_of_router << endl;
 				// take router_ip_hdr->source_ip and
 				// initiate a DNS lookup
 			}
@@ -176,12 +208,17 @@ int main(int argc, char *argv[]){
 	
 
 	//************SEND ICMP BUFFER******************************
-	
-
-	int send_status=send_icmp_packet(2,sock,remote);
-	int receive_status = receive_icmp_response(sock);
-	
-	
+	//send all the icmp packets immediately
+	for (int ttl = 0; ttl < 30; ttl++) {
+		for (int j = 0; j < 3; j++) {
+			send_icmp_packet(ttl, sock, remote);
+		}
+	}
+	//int send_status=send_icmp_packet(2,sock,remote);
+	for (int i = 0; i < 30; i++)
+	{
+		int receive_status = receive_icmp_response(sock);
+	}
 
 }
 
