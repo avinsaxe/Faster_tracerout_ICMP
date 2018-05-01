@@ -13,6 +13,7 @@
 #include "SenderHeaders.h"
 #include <WS2tcpip.h>
 
+
 //href:// Notes from classes, hw2 pdf
 
 
@@ -23,6 +24,20 @@ using namespace std;
 
 vector<Ping_Results> responses(30);
 vector<long> time_packets_sent(30);
+vector<long> timeouts(30);
+
+void print_results() {
+	for (int i = 0; i < responses.size(); i++) {
+		Ping_Results pr = responses[i];
+		int ttl=pr.ttl;
+		char* host_name=pr.host_name;
+		char* ip=pr.ip;
+		int num_probes=pr.num_probes;
+		double rtt=pr.rtt;
+		
+		printf("%d\t%s (%s) %.3f ms (%d)",ttl,host_name,ip,rtt,num_probes);
+	}
+}
 
 sockaddr_in fetchServer(string hostName)
 {
@@ -216,6 +231,25 @@ int receive_icmp_response(SOCKET sock) {
 	}	
 
 }
+struct GREATER {
+	bool operator()(const long&a, const long&b) const
+	{
+		return a>b;
+	}
+};
+
+//href: https://stackoverflow.com/questions/14016921/comparator-for-min-heap-in-c
+long get_root_from_min_heap() {
+	if (timeouts.size() == 0) {
+		return -1l;
+	}
+	std::pop_heap(timeouts.begin(), timeouts.end(), GREATER());
+	long l = (timeouts.back());
+	timeouts.pop_back();
+	///(timeouts.begin(), timeouts.end(), GREATER());
+	printf("%li\n", l);
+	return l;
+}
 int main(int argc, char *argv[]){
 		
 	if (argc != 2) {
@@ -229,8 +263,17 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 
+	//************MAKE THE HEAP FOR TIMEOUTS********************
+	for (int i = 0; i < 30; i++) {
+		timeouts[i]=500;  //initial timeout for all packets is 500 ms
+	}
+	//line that makes a min heap
+	std::make_heap(timeouts.begin(), timeouts.end(),GREATER());
+
 	
-	
+	//*******************************************************
+
+
 	// ********IP ADDRESS FROM HOST *****************
 	string destination_ip= argv[1];
 
@@ -264,8 +307,8 @@ int main(int argc, char *argv[]){
 
 	//************SEND ICMP BUFFER******************************
 	//send all the icmp packets immediately (30 packets)
-	for (int ttl = 0; ttl < 30; ttl++) {
-			time_packets_sent[ttl] = timeGetTime();
+	for (int ttl = 1; ttl <= 30; ttl++) {
+			time_packets_sent[ttl-1] = timeGetTime();
 			send_icmp_packet(ttl, sock, remote);
 	}
 	//int send_status=send_icmp_packet(2,sock,remote);

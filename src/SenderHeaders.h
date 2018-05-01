@@ -63,5 +63,7 @@ public:
 	char* ip;
 	double rtt;
 	int num_probes;
+	long time_sent;
+	long time_received;
 };
 /* now restore the previous packing state */
