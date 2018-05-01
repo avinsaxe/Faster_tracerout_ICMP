@@ -62,7 +62,7 @@ public:
 	char* host_name;
 	char* ip;
 	double rtt;
-	int num_probes;
+	int num_probes=0;
 	long time_sent;
 	long time_received;
 };

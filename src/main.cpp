@@ -11,6 +11,7 @@
 #include "common.h"
 #include "stdafx.h"
 #include "SenderHeaders.h"
+#include <thread>
 #include <WS2tcpip.h>
 
 
@@ -24,7 +25,9 @@ using namespace std;
 
 vector<Ping_Results> responses(30);
 vector<long> time_packets_sent(30);
-vector<long> timeouts(30);
+vector<long> future_retx_times(30);  //this is a min heap
+std::thread thread_updater[30];   //max 30 threads in parallel
+static int thread_num = 0;
 
 void print_results() {
 	for (int i = 0; i < responses.size(); i++) {
@@ -123,6 +126,7 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 }
 
 
+
 char* getnamefromip(char* ip) {
 	//href:// msdn https://msdn.microsoft.com/en-us/library/windows/desktop/ms738532(v=vs.85).aspx
 	DWORD dwRetval;
@@ -140,6 +144,16 @@ char* getnamefromip(char* ip) {
 	else {
 		return hostname;
 	}
+}
+
+void thread_get_host_info(int index,char *ip) {
+	printf("Update thread %d \n", index);
+	hostent *host_name = gethostbyname(ip);
+	char *host = getnamefromip(ip);
+	responses[index].host_name = host;
+	responses[index].ip = host_name->h_name;
+	printf("<-- sequence %d, host %s, ip %s, num_probes %d, rtt %.3f \n", index, responses[index].host_name,responses[index].ip,responses[index].num_probes,responses[index].rtt);
+
 }
 int receive_icmp_response(SOCKET sock) {
 	
@@ -201,16 +215,12 @@ int receive_icmp_response(SOCKET sock) {
 					sockaddr_in dns_sock;
 					dns_sock.sin_addr.s_addr = ip_address_of_router;
 					char* ip = inet_ntoa(dns_sock.sin_addr);
-					hostent *host_name = gethostbyname(ip);
-					char *host = getnamefromip(ip);
 					
-					Ping_Results ping_result;
-					ping_result.ip = host_name->h_name;
-					ping_result.host_name = host;
-					ping_result.ttl = sequence;  //sequence number of packet sent
-					ping_result.rtt = ((double)(timeGetTime() - time_packets_sent[sequence])/(1e3));
-					responses[sequence] = ping_result;
-					printf("<-- sequence %d, ip_address %s, id %d, host %s, rtt %.3f \n", sequence, host_name->h_name, orig_icmp_hdr->id, host,responses[sequence].rtt);
+					//Ping_Results ping_result;
+					responses[sequence].time_received = timeGetTime();
+					responses[sequence].ttl = sequence;  //sequence number of packet sent
+					responses[sequence].rtt = ((double)(responses[sequence].time_received - time_packets_sent[sequence])/(1e3));
+					thread_updater[sequence] = thread(thread_get_host_info, sequence, ip);
 					if (sequence == first_response_not_received) {
 						first_response_not_received++;
 					}
@@ -240,12 +250,12 @@ struct GREATER {
 
 //href: https://stackoverflow.com/questions/14016921/comparator-for-min-heap-in-c
 long get_root_from_min_heap() {
-	if (timeouts.size() == 0) {
+	if (future_retx_times.size() == 0) {
 		return -1l;
 	}
-	std::pop_heap(timeouts.begin(), timeouts.end(), GREATER());
-	long l = (timeouts.back());
-	timeouts.pop_back();
+	std::pop_heap(future_retx_times.begin(), future_retx_times.end(), GREATER());
+	long l = (future_retx_times.back());
+	future_retx_times.pop_back();
 	///(timeouts.begin(), timeouts.end(), GREATER());
 	printf("%li\n", l);
 	return l;
@@ -264,11 +274,9 @@ int main(int argc, char *argv[]){
 	}
 
 	//************MAKE THE HEAP FOR TIMEOUTS********************
-	for (int i = 0; i < 30; i++) {
-		timeouts[i]=500;  //initial timeout for all packets is 500 ms
-	}
+	
 	//line that makes a min heap
-	std::make_heap(timeouts.begin(), timeouts.end(),GREATER());
+	std::make_heap(future_retx_times.begin(), future_retx_times.end(),GREATER());
 
 	
 	//*******************************************************
@@ -309,6 +317,9 @@ int main(int argc, char *argv[]){
 	//send all the icmp packets immediately (30 packets)
 	for (int ttl = 1; ttl <= 30; ttl++) {
 			time_packets_sent[ttl-1] = timeGetTime();
+			future_retx_times[ttl-1] = 500+time_packets_sent[ttl-1];  //initial timeout for all packets is 500 ms
+			responses[ttl - 1] = Ping_Results();
+			responses[ttl - 1].num_probes++;
 			send_icmp_packet(ttl, sock, remote);
 	}
 	//int send_status=send_icmp_packet(2,sock,remote);
