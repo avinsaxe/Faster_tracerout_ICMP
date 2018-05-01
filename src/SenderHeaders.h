@@ -66,4 +66,10 @@ public:
 	long time_sent;
 	long time_received;
 };
+
+class Timeouts {
+public:
+	int index;
+	long timeout;
+};
 /* now restore the previous packing state */

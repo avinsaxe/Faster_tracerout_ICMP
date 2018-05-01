@@ -22,13 +22,34 @@ using namespace std;
 
 
 //href:// taken from HW1 submission of my own code
-
+long rto=0;
+Timeouts t;
+struct timeval timeout;
+int index_of_awaited_packet = 0;
 vector<Ping_Results> responses(30);
-vector<long> time_packets_sent(30);
-vector<long> future_retx_times(30);  //this is a min heap
+//vector<long> time_packets_sent(30);
+vector<Timeouts> timeouts_interval(30);  //this is a min heap
 std::thread thread_updater[30];   //max 30 threads in parallel
 static int thread_num = 0;
 
+struct GREATER {
+	bool operator()(const Timeouts&a, const Timeouts&b) const
+	{
+		return a.timeout>b.timeout;
+	}
+};
+
+//href: https://stackoverflow.com/questions/14016921/comparator-for-min-heap-in-c
+Timeouts get_root_from_min_heap() {
+	if (timeouts_interval.size() == 0) {
+		return Timeouts();
+	}
+	std::pop_heap(timeouts_interval.begin(), timeouts_interval.end(), GREATER());
+	Timeouts t = (timeouts_interval.back());
+	timeouts_interval.pop_back();
+	///(timeouts.begin(), timeouts.end(), GREATER());
+	return t;
+}
 void print_results() {
 	for (int i = 0; i < responses.size(); i++) {
 		Ping_Results pr = responses[i];
@@ -116,7 +137,7 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 		exit(-1);
 	}
 	//use regular sendto on the above packet
-	printf("--> id %d, sequence %d, ttl %d\n\n", icmp->id, icmp->seq, ip_h->ttl);
+	printf("--> id %d, sequence %d, ttl %d\n", icmp->id, icmp->seq, ip_h->ttl);
 	int sendtostatus = sendto(sock, (char*)send_buf, sizeof(ICMPHeader), 0, (SOCKADDR *)&remote, sizeof(remote));
 	if (sendtostatus == SOCKET_ERROR) {
 		printf("WSAERROR  %d \n", WSAGetLastError());
@@ -152,9 +173,25 @@ void thread_get_host_info(int index,char *ip) {
 	char *host = getnamefromip(ip);
 	responses[index].host_name = host;
 	responses[index].ip = host_name->h_name;
-	printf("<-- sequence %d, host %s, ip %s, num_probes %d, rtt %.3f \n", index, responses[index].host_name,responses[index].ip,responses[index].num_probes,responses[index].rtt);
+	printf("<-- sequence %d, host %s, ip %s, num_probes %d, rtt %.3f, packet_sent_time %li, packet_received_time %li \n", index, responses[index].host_name,responses[index].ip,responses[index].num_probes,responses[index].rtt,responses[index].time_sent,responses[index].time_received);
+	
 
 }
+
+void update_min_timeout_for_not_received_packet() {
+	while (timeouts_interval.size()>0) {
+		t = get_root_from_min_heap();
+		rto = t.timeout;  //starting rto is 500 ms i.e. 500000 microseconds
+		index_of_awaited_packet = t.index;
+		rto = rto * 1e3;
+		timeout.tv_sec = (long)((double)rto / 1e6);
+		timeout.tv_usec = rto;
+		if (responses[index_of_awaited_packet].time_received != 0) {  //if this is the timeout consideration for packet that has not been received, we can go to the packet
+			return;
+		}
+	}
+}
+
 int receive_icmp_response(SOCKET sock) {
 	
 	int first_response_not_received = 0;
@@ -165,16 +202,13 @@ int receive_icmp_response(SOCKET sock) {
 	ICMPHeader *router_icmp_hdr = (ICMPHeader *)(router_ip_hdr + 1);
 	IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
 	ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
-
-	long rto = 500000;  //starting rto is 500 ms i.e. 500000 microseconds
+	
 	fd_set fd;
+	update_min_timeout_for_not_received_packet();
 	
-	struct timeval timeout;
-	timeout.tv_sec = (long)((double)rto/1e6);
-	timeout.tv_usec = rto;
-	
-	
+	int cnt = 0;
 	while (true) {
+		cnt++;
 		timeout.tv_sec = (long)((double)rto / 1e6);
 		timeout.tv_usec = rto;
 		FD_ZERO(&fd);
@@ -189,7 +223,20 @@ int receive_icmp_response(SOCKET sock) {
 			printf("failed select with %d\n", WSAGetLastError());
 			return SOCKET_ERROR;
 		}
-		if (totalSizeOnSelect == 0) {
+		if (totalSizeOnSelect == 0) {  //this is the timeout event
+
+			/*
+			     if index i has not been received, but i-1 and i+1 have been received
+				    timeout_i = 2*((rtt_i-1 +rtt_i+1)/2)
+
+				 if index i has not been received, and i-1 has not been received
+				     timeout_i = 2*(rtt_i+1)
+
+				 if index i has not been received and i+1 has not been received
+				     timeout_i = 4*(rtt_i-1)    //as the timeout for closer one should be less
+
+			*/
+	
 			printf("Total Size on select %d\n", totalSizeOnSelect);
 			continue;
 		}
@@ -219,7 +266,7 @@ int receive_icmp_response(SOCKET sock) {
 					//Ping_Results ping_result;
 					responses[sequence].time_received = timeGetTime();
 					responses[sequence].ttl = sequence;  //sequence number of packet sent
-					responses[sequence].rtt = ((double)(responses[sequence].time_received - time_packets_sent[sequence])/(1e3));
+					responses[sequence].rtt = ((double)(responses[sequence].time_received - responses[sequence].time_sent)/(1e3));
 					thread_updater[sequence] = thread(thread_get_host_info, sequence, ip);
 					if (sequence == first_response_not_received) {
 						first_response_not_received++;
@@ -236,30 +283,13 @@ int receive_icmp_response(SOCKET sock) {
 				}
 			}
 		}
-
+		//keep updating the timeout everytime
+		update_min_timeout_for_not_received_packet();
 
 	}	
 
 }
-struct GREATER {
-	bool operator()(const long&a, const long&b) const
-	{
-		return a>b;
-	}
-};
 
-//href: https://stackoverflow.com/questions/14016921/comparator-for-min-heap-in-c
-long get_root_from_min_heap() {
-	if (future_retx_times.size() == 0) {
-		return -1l;
-	}
-	std::pop_heap(future_retx_times.begin(), future_retx_times.end(), GREATER());
-	long l = (future_retx_times.back());
-	future_retx_times.pop_back();
-	///(timeouts.begin(), timeouts.end(), GREATER());
-	printf("%li\n", l);
-	return l;
-}
 int main(int argc, char *argv[]){
 		
 	if (argc != 2) {
@@ -276,7 +306,7 @@ int main(int argc, char *argv[]){
 	//************MAKE THE HEAP FOR TIMEOUTS********************
 	
 	//line that makes a min heap
-	std::make_heap(future_retx_times.begin(), future_retx_times.end(),GREATER());
+	std::make_heap(timeouts_interval.begin(), timeouts_interval.end(),GREATER());
 
 	
 	//*******************************************************
@@ -302,8 +332,10 @@ int main(int argc, char *argv[]){
 	//*************************************************************
 	
 
-	SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 	
+
+	SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+
 	if (sock == INVALID_SOCKET)
 	{
 		printf("Unable to create a raw socket: error %d\n", WSAGetLastError());
@@ -311,19 +343,20 @@ int main(int argc, char *argv[]){
 		exit(-1);
 	}
 
-	
-
 	//************SEND ICMP BUFFER******************************
 	//send all the icmp packets immediately (30 packets)
 	for (int ttl = 1; ttl <= 30; ttl++) {
-			time_packets_sent[ttl-1] = timeGetTime();
-			future_retx_times[ttl-1] = 500+time_packets_sent[ttl-1];  //initial timeout for all packets is 500 ms
-			responses[ttl - 1] = Ping_Results();
-			responses[ttl - 1].num_probes++;
-			send_icmp_packet(ttl, sock, remote);
+		
+		responses[ttl - 1].num_probes++;
+		responses[ttl - 1].time_sent = timeGetTime();
+		//update of future_retx_times
+		timeouts_interval[ttl - 1].index = ttl - 1;
+		timeouts_interval[ttl - 1].timeout = 500;
+		//sending part
+		int status = -1;
+		status = send_icmp_packet(ttl, sock, remote);
 	}
-	//int send_status=send_icmp_packet(2,sock,remote);
 	receive_icmp_response(sock);
-
+	
 }
 
