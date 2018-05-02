@@ -29,7 +29,7 @@ struct timeval timeout;
 int index_of_awaited_packet = 0;
 vector<Ping_Results> responses(30);
 //vector<long> time_packets_sent(30);
-vector<Timeouts> timeouts_interval(30);  //this is a min heap
+vector<Timeouts> timeouts_interval(0);  //this is a min heap
 std::thread thread_updater[30];   //max 30 threads in parallel
 static int thread_num = 0;
 DWORD ID = GetCurrentProcessId();
@@ -50,6 +50,7 @@ Timeouts get_root_from_min_heap() {
 	std::pop_heap(timeouts_interval.begin(), timeouts_interval.end(), GREATER());
 	Timeouts t = (timeouts_interval.back());
 	timeouts_interval.pop_back();
+	printf("POPPED element %d and remaining size is %d",t.index,timeouts_interval.size());
 	///(timeouts.begin(), timeouts.end(), GREATER());
 	return t;
 }
@@ -123,6 +124,7 @@ u_short ip_checksum(u_short *buffer, int size)
 }
 
 int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
+	printf("TTL is ***** %d",ttl);
 	u_char send_buf[MAX_ICMP_SIZE]; /* IP header is not present here */
 	ICMPHeader *icmp = (ICMPHeader *)send_buf;
 	// set up the echo request
@@ -140,7 +142,6 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 	/* calculate the checksum */
 	int packet_size = sizeof(ICMPHeader); // 8 bytes
 	icmp->checksum = ip_checksum((u_short *)send_buf, packet_size);
-	printf("Socket Options are ttl %d",ttl);
 	if (setsockopt(sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == SOCKET_ERROR) {
 		printf("Setsocket failed with %d \n", WSAGetLastError());
 		WSACleanup();
@@ -244,7 +245,6 @@ long getTimeoutForRetransmissionPacket(int index) {
 			timeout= 500l;
 		}
 	}
-	timeout = 50000l;
 	return timeout;
 }
 
@@ -255,23 +255,18 @@ int receive_icmp_response(SOCKET sock) {
 	int first_response_not_received = 0;
 	update_min_timeout_for_not_received_packet();
 	fd_set fd;
-	rto = 5000000;
-	printf("RTO is %li", rto);
-
-	
-	
+	rto = 500000;
+		
 	int cnt = 0;
 	while (true) {		
-		cnt++;
+		cnt++;		
+		rto = 1000000;
 		
-		//removeeeeeeeeeeeeeeeeee
-		rto = 5000000;
-
 		timeout.tv_sec = (long)((double)rto / 1e6);
 		timeout.tv_usec = rto;
 		FD_ZERO(&fd);
 		FD_SET(sock, &fd);
-
+		update_min_timeout_for_not_received_packet();
 		int totalSizeOnSelect = select(0, &fd, NULL, NULL, &timeout);		
 		if (totalSizeOnSelect == SOCKET_ERROR) {
 			printf("Select failed with %d \n", WSAGetLastError());
@@ -291,6 +286,7 @@ int receive_icmp_response(SOCKET sock) {
 				responses[index_of_awaited_packet].time_sent = timeGetTime();
 				
 				rto = timeout_expected_for_new_retransmission;
+				rto = rto * 1e3;
 
 				Timeouts timeout;
 				timeout.index = index_of_awaited_packet;
@@ -298,10 +294,13 @@ int receive_icmp_response(SOCKET sock) {
 				timeouts_interval.push_back(timeout);
 				//sending part
 				int status = -1;
-				status = send_icmp_packet(index_of_awaited_packet + 1, sock, remote);
-				printf("Total Size on select %d\n", totalSizeOnSelect);
+				if (responses[index_of_awaited_packet].isReceived == false)
+				{
+					status = send_icmp_packet(index_of_awaited_packet + 1, sock, remote);
+				}
+				//printf("Total Size on select %d\n", totalSizeOnSelect);
 			}
-			printf("*Total Size on select %d\n", totalSizeOnSelect);
+			//printf("*Total Size on select %d\n", totalSizeOnSelect);
 			continue;
 		}
 
@@ -429,8 +428,11 @@ int main(int argc, char *argv[]){
 		responses[ttl - 1].num_probes++;
 		responses[ttl - 1].time_sent = timeGetTime();
 		//update of future_retx_times
-		timeouts_interval[ttl - 1].index = ttl - 1;
-		timeouts_interval[ttl - 1].timeout = 500;
+		Timeouts timeout;
+		timeout.index = ttl - 1;
+		timeout.timeout = 500;
+
+		timeouts_interval.push_back(timeout);
 		//sending part
 		int status = -1;
 		status = send_icmp_packet(ttl, sock, remote);
