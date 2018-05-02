@@ -138,12 +138,12 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 		exit(-1);
 	}
 	//use regular sendto on the above packet
-	printf("--> id %d, sequence %d, ttl %d\n", icmp->id, icmp->seq, ip_h->ttl);
 	int sendtostatus = sendto(sock, (char*)send_buf, sizeof(ICMPHeader), 0, (SOCKADDR *)&remote, sizeof(remote));
 	if (sendtostatus == SOCKET_ERROR) {
 		printf("WSAERROR  %d \n", WSAGetLastError());
 		exit(1);
 	}
+	printf("--> id %d, sequence %d, ttl %d and status %d\n", icmp->id, icmp->seq, ip_h->ttl,sendtostatus);
 	return sendtostatus;
 }
 
@@ -175,8 +175,10 @@ void thread_get_host_info(int index,char *ip) {
 	//printf("Update thread %d \n", index);
 	hostent *host_name = gethostbyname(ip);
 	char *host = getnamefromip(ip);
-	responses[index].host_name = host;
-	responses[index].ip = host_name->h_name;
+	if(host!=NULL)
+		responses[index].host_name = host;
+	if(host_name!=NULL)
+		responses[index].ip = host_name->h_name;
 	printf("<-- sequence %d, host %s, ip %s, num_probes %d, rtt %.3f, packet_sent_time %li, packet_received_time %li \n", index, responses[index].host_name,responses[index].ip,responses[index].num_probes,responses[index].rtt,responses[index].time_sent,responses[index].time_received);
 	
 
@@ -232,6 +234,7 @@ long getTimeoutForRetransmissionPacket(int index) {
 			timeout= 500l;
 		}
 	}
+	timeout = 50000;
 	return timeout;
 }
 
