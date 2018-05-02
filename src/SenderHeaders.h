@@ -65,6 +65,7 @@ public:
 	int num_probes=0;
 	long time_sent;
 	long time_received;
+	bool isReceived;
 };
 
 class Timeouts {
