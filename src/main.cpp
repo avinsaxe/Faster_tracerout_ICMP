@@ -32,6 +32,8 @@ vector<Ping_Results> responses(30);
 vector<Timeouts> timeouts_interval(30);  //this is a min heap
 std::thread thread_updater[30];   //max 30 threads in parallel
 static int thread_num = 0;
+DWORD ID = GetCurrentProcessId();
+SOCKET sock;
 
 struct GREATER {
 	bool operator()(const Timeouts&a, const Timeouts&b) const
@@ -66,7 +68,9 @@ void print_results() {
 
 sockaddr_in fetchServer(string hostName)
 {
-	struct sockaddr_in server;
+	
+	memset(&remote, 0, sizeof(struct sockaddr_in));
+	
 	in_addr addr;
 	char *hostAddr;
 	int len = hostName.length();
@@ -84,13 +88,18 @@ sockaddr_in fetchServer(string hostName)
 		{
 			exit(-1);
 		}
-		cout << inet_ntoa(addr)<<endl;
-		memcpy((char*)(&server.sin_addr), host_ent->h_addr, host_ent->h_length);
+		//cout << inet_ntoa(addr)<<endl;
+		memcpy((char*)(&remote.sin_addr), host_ent->h_addr, host_ent->h_length);
 	}
 	else {
-		server.sin_addr.S_un.S_addr = dwRetVal;
+		remote.sin_addr.S_un.S_addr = dwRetVal;
 	}
-	return server;
+	remote.sin_family = AF_INET;
+	remote.sin_port = htons(7);
+
+	bind(sock,(struct sockaddr*)&remote,sizeof(remote));
+
+	return remote;
 }
 
 
@@ -122,7 +131,7 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 	icmp->code = 0;
 
 	// set up ID/SEQ fields as needed todo
-	icmp->id = (u_short)GetCurrentProcessId(); //id is same for all packets. This is for checking validity of the packet
+	icmp->id = (u_short)ID; //id is same for all packets. This is for checking validity of the packet
 	icmp->seq = ttl;
 	IPHeader *ip_h = (IPHeader* )((ICMPHeader*)send_buf + 1);
 	ip_h->ttl = ttl;
@@ -131,7 +140,7 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 	/* calculate the checksum */
 	int packet_size = sizeof(ICMPHeader); // 8 bytes
 	icmp->checksum = ip_checksum((u_short *)send_buf, packet_size);
-
+	printf("Socket Options are ttl %d",ttl);
 	if (setsockopt(sock, IPPROTO_IP, IP_TTL, (const char*)&ttl, sizeof(ttl)) == SOCKET_ERROR) {
 		printf("Setsocket failed with %d \n", WSAGetLastError());
 		WSACleanup();
@@ -184,6 +193,7 @@ void thread_get_host_info(int index,char *ip) {
 
 }
 
+//updates index_of_awaited_packets based on min timeout
 void update_min_timeout_for_not_received_packet() {
 	while (timeouts_interval.size()>0) {
 		t = get_root_from_min_heap();
@@ -234,7 +244,7 @@ long getTimeoutForRetransmissionPacket(int index) {
 			timeout= 500l;
 		}
 	}
-	timeout = 50000;
+	timeout = 50000l;
 	return timeout;
 }
 
@@ -243,20 +253,26 @@ long getTimeoutForRetransmissionPacket(int index) {
 int receive_icmp_response(SOCKET sock) {
 	
 	int first_response_not_received = 0;
-	
+	update_min_timeout_for_not_received_packet();
+	fd_set fd;
+	rto = 5000000;
+	printf("RTO is %li", rto);
+
 	
 	
 	int cnt = 0;
-	while (true) {
-		update_min_timeout_for_not_received_packet();
-		fd_set fd;
+	while (true) {		
 		cnt++;
+		
+		//removeeeeeeeeeeeeeeeeee
+		rto = 5000000;
+
 		timeout.tv_sec = (long)((double)rto / 1e6);
 		timeout.tv_usec = rto;
 		FD_ZERO(&fd);
 		FD_SET(sock, &fd);
 
-		int totalSizeOnSelect = select(0, &fd, NULL, NULL, &timeout);
+		int totalSizeOnSelect = select(0, &fd, NULL, NULL, &timeout);		
 		if (totalSizeOnSelect == SOCKET_ERROR) {
 			printf("Select failed with %d \n", WSAGetLastError());
 			return SOCKET_ERROR;
@@ -267,24 +283,15 @@ int receive_icmp_response(SOCKET sock) {
 		}
 		if (totalSizeOnSelect == 0) {  //this is the timeout event
 
-			/*
-			     if index i has not been received, but i-1 and i+1 have been received
-				    timeout_i = 2*((rtt_i-1 +rtt_i+1)/2)
-
-				 if index i has not been received, and i-1 has not been received
-				     timeout_i = 2*(rtt_i+1)
-
-				 if index i has not been received and i+1 has not been received
-				     timeout_i = 4*(rtt_i-1)    //as the timeout for closer one should be less
-
-			*/
 			//if packet that we are expecting has not been received, then only retransmit, and the number of probes for this should be less than 3
+			
 			if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3) {
-				
 				long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
 				responses[index_of_awaited_packet].num_probes++;
 				responses[index_of_awaited_packet].time_sent = timeGetTime();
 				
+				rto = timeout_expected_for_new_retransmission;
+
 				Timeouts timeout;
 				timeout.index = index_of_awaited_packet;
 				timeout.timeout = timeout_expected_for_new_retransmission;
@@ -297,6 +304,7 @@ int receive_icmp_response(SOCKET sock) {
 			printf("*Total Size on select %d\n", totalSizeOnSelect);
 			continue;
 		}
+
 		u_char rec_buf[MAX_REPLY_SIZE];  /* this buffer starts gethostname an IP header */
 		int recv = recvfrom(sock, (char*)rec_buf, MAX_REPLY_SIZE, 0, NULL, NULL);
 		if (recv == SOCKET_ERROR) {
@@ -313,10 +321,13 @@ int receive_icmp_response(SOCKET sock) {
 
 			int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
 												 //cout << "Sequence Received " << sequence << endl;
-			if (orig_ip_hdr->proto == (u_char)1)
+			if (responses[sequence].isReceived == true) {
+				continue;
+			}
+			if (orig_ip_hdr->proto == IPPROTO_ICMP)
 			{
 				// check if process ID matches
-				if (orig_icmp_hdr->id == GetCurrentProcessId())
+				if (orig_icmp_hdr->id == ID)
 				{
 					u_long ip_address_of_router = router_ip_hdr->source_ip;
 					sockaddr_in dns_sock;
@@ -329,6 +340,7 @@ int receive_icmp_response(SOCKET sock) {
 					responses[sequence].rtt = ((double)(responses[sequence].time_received - responses[sequence].time_sent) / (1e3));
 					responses[sequence].isReceived = true;
 					thread_updater[sequence] = thread(thread_get_host_info, sequence, ip);
+					thread_updater[sequence].detach();
 					if (sequence == first_response_not_received) {
 						first_response_not_received++;
 					}
@@ -338,7 +350,7 @@ int receive_icmp_response(SOCKET sock) {
 		else if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
 			//echo replies only have 28 bytes of the packet, and hence only routers sequence and id can be extracted, which should be same as our own
 			int sequence = router_icmp_hdr->seq;
-			if (router_icmp_hdr->id == GetCurrentProcessId()) {
+			if (router_icmp_hdr->id == ID) {
 				if (sequence >= first_response_not_received) {
 					printf("Received echo reply from a router which is at some hops away. All previous are already computed\n");
 					return 1;
@@ -365,6 +377,16 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 
+
+	sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+
+	if (sock == INVALID_SOCKET)
+	{
+		printf("Unable to create a raw socket: error %d\n", WSAGetLastError());
+		WSACleanup();
+		exit(-1);
+	}
+
 	//************MAKE THE HEAP FOR TIMEOUTS********************
 	
 	//line that makes a min heap
@@ -388,22 +410,17 @@ int main(int argc, char *argv[]){
 	//*********** SERVER CODE *******************
 
 	remote= fetchServer(targetHostStr);
-	remote.sin_family = AF_INET;
-	remote.sin_port = htons(7);
+
+	
 	
 	//*************************************************************
 	
 
 	
 
-	SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+	
 
-	if (sock == INVALID_SOCKET)
-	{
-		printf("Unable to create a raw socket: error %d\n", WSAGetLastError());
-		WSACleanup();
-		exit(-1);
-	}
+
 
 	//************SEND ICMP BUFFER******************************
 	//send all the icmp packets immediately (30 packets)
