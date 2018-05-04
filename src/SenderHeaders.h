@@ -63,8 +63,8 @@ public:
 	char* ip;
 	double rtt;
 	int num_probes=0;
-	long time_sent;
-	long time_received;
+	uint64_t time_sent;  //microseconds
+	uint64_t time_received;  //microseconds
 	bool isReceived;
 };
 
