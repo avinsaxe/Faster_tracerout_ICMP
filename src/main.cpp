@@ -13,6 +13,9 @@
 #include "SenderHeaders.h"
 #include <thread>
 #include <WS2tcpip.h>
+#include <iostream>
+#include <fstream>
+
 #define CURRENT_TIME_H
 
 #include <chrono>
@@ -47,6 +50,20 @@ double per_hop_timeout = 0;
 double timeout_delta = 10.0;
 int n = 0;
 
+void reinit() {
+	index_of_awaited_packet = 0;
+	responses=vector<Ping_Results>(30);
+	timeouts_interval=vector<Timeouts>(0);  //this is a min heap
+	ID = GetCurrentProcessId();
+	event_icmp = WSACreateEvent();
+	can_end_on_timeout = false;
+	smallest_index_echo_response = 29;
+	total_sent = 0;
+	//these are times in milliseconds
+	per_hop_timeout = 0;
+	timeout_delta = 10.0;
+	n = 0;
+}
 struct GREATER {
 	bool operator()(const Timeouts&a, const Timeouts&b) const
 	{
@@ -87,7 +104,7 @@ sockaddr_in fetchServer(char* host)
 		else if (host_ent == NULL)
 		{
 			printf("Host Ent is null. Unable to fetch server\n");
-			exit(1);
+			return remote;
 		}
 		//cout << inet_ntoa(addr)<<endl;
 		
@@ -288,7 +305,7 @@ long getTimeoutForRetransmissionPacket(int index) {
 
 
 
-int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
+int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 {	
 	int cnt = 0;	
 	u_char *rec_buf = (u_char*)malloc(MAX_REPLY_SIZE * sizeof(u_char));  /* this buffer starts gethostname an IP header */
@@ -322,7 +339,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 				//if packet that we are expecting has not been received, then only retransmit, and the number of probes for this should be less than 3
 				//printf("Total size on select is 0\n");
 				cnt++;
-				if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 && index_of_awaited_packet<smallest_index_echo_response)
+				if (check_dns &&  responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 && index_of_awaited_packet<smallest_index_echo_response)
 				{
 					//long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
 					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket2(index_of_awaited_packet);
@@ -354,73 +371,91 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 				//printf("***********Receive response %d and sequence is %d id is %d\n", recv, router_icmp_hdr ->seq, router_icmp_hdr->id);
 				//sequence always from original icmp hdr
 				//first time when ICMP_ECHO_RESPONSE IS RECEIVED, handle it
-				if (router_icmp_hdr->code == 0 && (router_icmp_hdr->type==ICMP_ECHO_REPLY  || router_icmp_hdr->type == ICMP_TTL_EXPIRED)  )
-				{		
-					
+				if (router_icmp_hdr->code == 0 && (router_icmp_hdr->type == ICMP_ECHO_REPLY || router_icmp_hdr->type == ICMP_TTL_EXPIRED))
+				{
+
 					if (orig_ip_hdr->proto == IPPROTO_ICMP)
 					{
-						//handle ICMP ECHO REPLY
-						if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
-							
-							//printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", router_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, router_ip_hdr->proto, router_icmp_hdr->id);
-							
-							if (router_icmp_hdr->id==ID && !responses[router_icmp_hdr->seq].isReceived) {
-								
-								smallest_index_echo_response = min(router_icmp_hdr->seq,smallest_index_echo_response);
-								//responses[orig_icmp_hdr->seq].isReceived = true;
-								
-								u_long ip_address_of_router = router_ip_hdr->source_ip;
-								sockaddr_in dns_sock;
-								dns_sock.sin_addr.s_addr = ip_address_of_router;
-								char* ip = inet_ntoa(dns_sock.sin_addr);
-								//printf(" %s \n", ip);
-								//Ping_Results ping_result;
-								responses[router_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-								responses[router_icmp_hdr->seq].ttl = router_icmp_hdr->seq;  //sequence number of packet sent
-								responses[router_icmp_hdr->seq].rtt = ((double)(responses[router_icmp_hdr->seq].time_received - responses[router_icmp_hdr->seq].time_sent) / (1e3));
-								responses[router_icmp_hdr->seq].isReceived = true;
-								responses[router_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
-								strcpy(responses[router_icmp_hdr->seq].ip, ip);
-								if (thread_updater[router_icmp_hdr->seq].joinable())
-								{
-									thread_updater[router_icmp_hdr->seq].join();
+						if (!check_dns) {
+							if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
+								if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived) {
+									smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
 								}
-								found_new = true;
-								char *ip_copy = (char*)malloc(NI_MAXHOST);
-								strcpy(ip_copy, ip);
-								thread_updater[router_icmp_hdr->seq] = thread(thread_get_host_info, router_icmp_hdr->seq, ip_copy);
-
 							}
 						}
-						else 
-						{
-							if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false) 
+						else {
+							//handle ICMP ECHO REPLY
+							if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
+
+								//printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", router_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, router_ip_hdr->proto, router_icmp_hdr->id);
+
+								if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived) {
+
+									smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
+									//responses[orig_icmp_hdr->seq].isReceived = true;
+
+									u_long ip_address_of_router = router_ip_hdr->source_ip;
+									sockaddr_in dns_sock;
+									dns_sock.sin_addr.s_addr = ip_address_of_router;
+									char* ip = inet_ntoa(dns_sock.sin_addr);
+									//printf(" %s \n", ip);
+									//Ping_Results ping_result;
+									responses[router_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+									responses[router_icmp_hdr->seq].ttl = router_icmp_hdr->seq;  //sequence number of packet sent
+									responses[router_icmp_hdr->seq].rtt = ((double)(responses[router_icmp_hdr->seq].time_received - responses[router_icmp_hdr->seq].time_sent) / (1e3));
+									responses[router_icmp_hdr->seq].isReceived = true;
+									responses[router_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
+									strcpy(responses[router_icmp_hdr->seq].ip, ip);
+									found_new = true;
+									if (check_dns) {
+										if (thread_updater[router_icmp_hdr->seq].joinable())
+										{
+											thread_updater[router_icmp_hdr->seq].join();
+										}
+
+										char *ip_copy = (char*)malloc(NI_MAXHOST);
+										strcpy(ip_copy, ip);
+										thread_updater[router_icmp_hdr->seq] = thread(thread_get_host_info, router_icmp_hdr->seq, ip_copy);
+									}
+
+								}
+							}
+							else  //when not in batch mode
 							{
-								//printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", orig_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, orig_ip_hdr->proto, orig_icmp_hdr->id);
-
-								u_long ip_address_of_router = router_ip_hdr->source_ip;
-								sockaddr_in dns_sock;
-								dns_sock.sin_addr.s_addr = ip_address_of_router;
-								char* ip = inet_ntoa(dns_sock.sin_addr);
-								//printf(" %s \n", ip);
-								//Ping_Results ping_result;
-								responses[orig_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-								responses[orig_icmp_hdr->seq].ttl = orig_icmp_hdr->seq;  //sequence number of packet sent
-								responses[orig_icmp_hdr->seq].rtt = ((double)(responses[orig_icmp_hdr->seq].time_received - responses[orig_icmp_hdr->seq].time_sent) / (1e3));
-								responses[orig_icmp_hdr->seq].isReceived = true;
-								responses[orig_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
-								strcpy(responses[orig_icmp_hdr->seq].ip, ip);
-								if (thread_updater[orig_icmp_hdr->seq].joinable()) 
+								if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false)
 								{
-									thread_updater[orig_icmp_hdr->seq].join();
+									//printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", orig_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, orig_ip_hdr->proto, orig_icmp_hdr->id);
+
+									u_long ip_address_of_router = router_ip_hdr->source_ip;
+									sockaddr_in dns_sock;
+									dns_sock.sin_addr.s_addr = ip_address_of_router;
+									char* ip = inet_ntoa(dns_sock.sin_addr);
+									//printf(" %s \n", ip);
+									//Ping_Results ping_result;
+									responses[orig_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+									responses[orig_icmp_hdr->seq].ttl = orig_icmp_hdr->seq;  //sequence number of packet sent
+									responses[orig_icmp_hdr->seq].rtt = ((double)(responses[orig_icmp_hdr->seq].time_received - responses[orig_icmp_hdr->seq].time_sent) / (1e3));
+									responses[orig_icmp_hdr->seq].isReceived = true;
+									responses[orig_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
+									strcpy(responses[orig_icmp_hdr->seq].ip, ip);
+									found_new = true;
+									if (check_dns) {
+										if (thread_updater[orig_icmp_hdr->seq].joinable())
+										{
+											thread_updater[orig_icmp_hdr->seq].join();
+										}
+
+										char *ip_copy = (char*)malloc(NI_MAXHOST);
+										strcpy(ip_copy, ip);
+										thread_updater[orig_icmp_hdr->seq] = thread(thread_get_host_info, orig_icmp_hdr->seq, ip_copy);
+									}
+
+
 								}
-								found_new = true;
-								char *ip_copy = (char*)malloc(NI_MAXHOST);
-								strcpy(ip_copy, ip);
-								thread_updater[orig_icmp_hdr->seq] = thread(thread_get_host_info, orig_icmp_hdr->seq, ip_copy);
 							}
+
 						}
-							
+
 					}
 				}
 				WSAResetEvent(event_icmp);
@@ -452,8 +487,27 @@ char* extract_url(string host) {
 	else if (i1 >= 0) {
 		host = host.substr(i1 + 4+3, host.length());
 	}
-	int index_of_dot = host.find_last_of(".");
-	string temp = "";
+	int index_of_slash = host.find_first_of("/");
+	int index_of_hash = host.find_first_of("#");
+	int index_of_question = host.find_first_of("?");
+	if (index_of_hash <0) {
+		index_of_hash = 10000;
+	}
+	if (index_of_question <0) {
+		index_of_question = 10000;
+	}
+	if (index_of_slash < 0) {
+		index_of_slash = 10000;
+	}
+
+	int min1 = min(index_of_hash, index_of_question);
+	int min2 = min(min1, index_of_slash);
+
+	if (min2 < host.length()) {
+		host = host.substr(0,min2);
+	}
+
+	/*string temp = "";
 	temp = host.substr(0, index_of_dot + 1);
 	for (int i = temp.length(); i < host.length(); i++) {
 		if (host[i] != '?' && host[i] != '#' && host[i] != '/') {
@@ -462,10 +516,11 @@ char* extract_url(string host) {
 		else {
 			break;
 		}
-	}
-	char *temp_ch = (char*)malloc(temp.length()+1);
-	strcpy(temp_ch,temp.c_str());
-	printf("%s", temp_ch);
+	}*/
+
+	char *temp_ch = (char*)malloc(host.length()+1);
+	strcpy(temp_ch,host.c_str());
+	printf("%s\n", temp_ch);
 	return temp_ch;	
 }
 string convert_char_to_string(char* arr) {
@@ -481,7 +536,7 @@ string convert_char_to_string(char* arr) {
 
 int main(int argc, char *argv[]){
 		
-	if (argc != 2 && argc!=3) {
+	if (argc != 2 && argc!=1) {
 		printf("Invalid number of arguments \n");
 		return 1;
 	}
@@ -492,16 +547,21 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 	//batch mode
-	if (argc == 3) {
-
-	}
-	if (argc == 2) {  //normal mode
-		char* destination_ip = argv[1];
-		string ipstr = convert_char_to_string(destination_ip);
-		destination_ip = extract_url(ipstr);
-		struct sockaddr_in remote = fetchServer(destination_ip);
-
-
+	if (argc == 1) {
+		int counts_url_per_hop[30];
+		for (int i = 0; i < 30; i++) {
+			counts_url_per_hop[i] = 0;
+		}
+		ifstream in("10k_urls.txt");
+		if (!in) {
+			cout << "Cannot open input file.\n";
+			return 1;
+		}
+		char *destination_ips[10000];
+		int index = 0;
+		for (int i = 0; i < 10000; i++) {
+			destination_ips[i] = (char*)malloc(NI_MAXHOST);
+		}
 		sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 		if (sock == INVALID_SOCKET)
 		{
@@ -511,12 +571,58 @@ int main(int argc, char *argv[]){
 		}
 
 
+		while (in) {
+			in.getline(destination_ips[index++],NI_MAXHOST);
+		}
+		for (int i = 0; i < 10000; i++) {
+			reinit();
+			string ipstr = convert_char_to_string(destination_ips[i]);
+			char* destination_ip = extract_url(ipstr);
+			struct sockaddr_in remote = fetchServer(destination_ip);
+			//************MAKE THE HEAP FOR TIMEOUTS********************
+			//line that makes a min heap
+			std::make_heap(timeouts_interval.begin(), timeouts_interval.end(), GREATER());
+			//************SEND ICMP BUFFER******************************
+			//send all the icmp packets immediately (30 packets)
+			for (int ttl = 0; ttl < 30; ttl++) {
+				responses[ttl].num_probes++;
+				responses[ttl].time_sent = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+				//update of future_retx_times
+				Timeouts timeout;
+				timeout.index = ttl;
+				timeout.timeout = 500;
+				timeouts_interval.push_back(timeout);
+				//sending part
+				int status = -1;
+				status = send_icmp_packet(ttl, sock, remote);
+			}
+			receive_icmp_response(sock, remote, false);
+			printf("[%d] = %d\n",i,smallest_index_echo_response);
+			counts_url_per_hop[smallest_index_echo_response]++;
+		}
+		ofstream myfile;
+		myfile.open("output-10k.txt");
+		for (int i = 0; i < 30; i++) {
+			printf("Writing\n");
+			myfile << "i = "<<i<<" URLS = "<<counts_url_per_hop[i]<<endl;
+		}
+		myfile.close();		
+	}
+	if (argc == 2) {  //normal mode
+		char* destination_ip = argv[1];
+		string ipstr = convert_char_to_string(destination_ip);
+		destination_ip = extract_url(ipstr);
+		struct sockaddr_in remote = fetchServer(destination_ip);
+		sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+		if (sock == INVALID_SOCKET)
+		{
+			printf("Unable to create a raw socket: error %d\n", WSAGetLastError());
+			WSACleanup();
+			return 1;
+		}
 		//************MAKE THE HEAP FOR TIMEOUTS********************
-
 		//line that makes a min heap
 		std::make_heap(timeouts_interval.begin(), timeouts_interval.end(), GREATER());
-
-
 		//************SEND ICMP BUFFER******************************
 		//send all the icmp packets immediately (30 packets)
 		for (int ttl = 0; ttl < 30; ttl++) {
@@ -530,10 +636,8 @@ int main(int argc, char *argv[]){
 			//sending part
 			int status = -1;
 			status = send_icmp_packet(ttl, sock, remote);
-
 		}
-		receive_icmp_response(sock, remote);
-
+		receive_icmp_response(sock, remote,true);
 		for (int i = 0; i < 30; i++) {
 			if (thread_updater[i].joinable())
 			{
@@ -541,7 +645,6 @@ int main(int argc, char *argv[]){
 			}
 		}
 		for (int i = 1; i <= smallest_index_echo_response; i++) {
-
 			if (responses[i].isReceived == true) {
 				printf("%d\t %s\t (%s)\t %0.3f ms\t(%d)\n", responses[i].ttl, responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
 			}

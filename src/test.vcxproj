@@ -191,6 +191,10 @@
     <Library Include="HTMLParser_release_win32.lib" />
     <Library Include="HTMLParser_release_x64.lib" />
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="10k_urls.txt" />
+    <Text Include="output-10k.txt" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

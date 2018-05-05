@@ -44,4 +44,8 @@
       <Filter>Resource Files</Filter>
     </Library>
   </ItemGroup>
+  <ItemGroup>
+    <Text Include="10k_urls.txt" />
+    <Text Include="output-10k.txt" />
+  </ItemGroup>
 </Project>
