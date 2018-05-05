@@ -50,6 +50,9 @@ double per_hop_timeout = 0;
 double timeout_delta = 10.0;
 int n = 0;
 
+map<u_long, int>batch_urls_count;
+map<int, int>batch_timed_bucket_url_count;
+
 void reinit() {
 	index_of_awaited_packet = 0;
 	responses=vector<Ping_Results>(30);
@@ -377,9 +380,35 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 					if (orig_ip_hdr->proto == IPPROTO_ICMP)
 					{
 						if (!check_dns) {
+
 							if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
 								if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived) {
+									u_long ip=router_ip_hdr->source_ip;
+									if (batch_urls_count.find(ip) != batch_urls_count.end()) {
+										batch_urls_count[ip] = batch_urls_count[ip] + 1;
+										printf("IP %ul Count %d\n", ip, batch_urls_count[ip]);
+									}
+									else {
+										batch_urls_count[ip]=1;
+										printf("IP %ul Count %d\n", ip, batch_urls_count[ip]);
+									}
 									smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
+									responses[router_icmp_hdr->seq].isReceived = true;
+									return 0; 
+								}
+							}
+							else {
+								if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false) {
+									u_long ip = router_ip_hdr->source_ip;
+									if (batch_urls_count.find(ip) != batch_urls_count.end()) {
+										batch_urls_count[ip] = batch_urls_count[ip] + 1;
+										printf("IP %ul Count %d\n", ip, batch_urls_count[ip]);
+									}
+									else {
+										batch_urls_count[ip]=1;
+										printf("IP %ul Count %d\n", ip, batch_urls_count[ip]);
+									}
+									responses[orig_icmp_hdr->seq].isReceived = true;
 								}
 							}
 						}
@@ -390,7 +419,6 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 								//printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", router_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, router_ip_hdr->proto, router_icmp_hdr->id);
 
 								if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived) {
-
 									smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
 									//responses[orig_icmp_hdr->seq].isReceived = true;
 
@@ -569,8 +597,6 @@ int main(int argc, char *argv[]){
 			WSACleanup();
 			return 1;
 		}
-
-
 		while (in) {
 			in.getline(destination_ips[index++],NI_MAXHOST);
 		}
