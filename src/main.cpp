@@ -55,7 +55,7 @@ Timeouts get_root_from_min_heap() {
 		return Timeouts();
 	}
 	std::pop_heap(timeouts_interval.begin(), timeouts_interval.end(), GREATER());
-	Timeouts t = (timeouts_interval.back());
+	t = (timeouts_interval.back());
 	timeouts_interval.pop_back();
 	//printf("POPPED element %d and remaining size is %d",t.index,timeouts_interval.size());
 	///(timeouts.begin(), timeouts.end(), GREATER());
@@ -200,15 +200,17 @@ void thread_get_host_info(int index,char *ip) {
 //updates index_of_awaited_packets based on min timeout. This updates the timeout as well
 void update_min_timeout_for_not_received_packet() {
 	while (timeouts_interval.size()>0) {
+
 		t = get_root_from_min_heap();
 		rto = t.timeout;  //starting rto is 500 ms i.e. 500000 microseconds
 		index_of_awaited_packet = t.index;
 		rto = rto * 1e3;		
 		timeout.tv_sec = (long)((double)rto / 1e6);
 		timeout.tv_usec = rto;
-		if (responses[index_of_awaited_packet].time_received == 0) {  //if this is the timeout consideration for packet that has not been received, we can go to the packet
+		return;
+		/*if (responses[index_of_awaited_packet].time_received == 0) {  //if this is the timeout consideration for packet that has not been received, we can go to the packet
 			return;
-		}
+		}*/
 	}
 }
 
@@ -263,57 +265,39 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 	ICMPHeader *router_icmp_hdr = (ICMPHeader *)(router_ip_hdr + 1);
 	IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
 	ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
-	while (cnt<10) 
+	while (true) 
 	{		
 		if (timeouts_interval.size() == 0) {
 			printf("No elements to wait\n");
 			return 1;
-		}				
-		DWORD timeout = 1000;
-		//update_min_timeout_for_not_received_packet();  //this always removes an element
+		}		
+
+		//setup retransmission timeout
+		update_min_timeout_for_not_received_packet();
+		DWORD retx_timeout = (DWORD)(timeout.tv_usec/(double)(1e3));
+		printf("Retransmission timeout %d \n", retx_timeout);
+
+
 		int totalSizeOnSelect = WSAEventSelect(sock,event_icmp,FD_READ);
 		if (totalSizeOnSelect == SOCKET_ERROR) {
 			printf("Select failed with %d \n", WSAGetLastError());
 			return SOCKET_ERROR;
 		}		
-		int select = WaitForSingleObject(event_icmp,timeout);
+		int select = WaitForSingleObject(event_icmp,retx_timeout);
 		switch (select) 
 		{
+			
 			case WAIT_OBJECT_0: 
-			{				
-				
-
+			{
+				bool found_new = false;
 				int recv = recvfrom(sock, (char*)rec_buf, MAX_REPLY_SIZE, 0, NULL, NULL);			
 				if (recv == SOCKET_ERROR) {
 					printf("Error in receive %d \n", WSAGetLastError());
 					return recv;
 				}
-
 				printf("***********Receive response %d and sequence is %d id is %d\n", recv, router_icmp_hdr ->seq, router_icmp_hdr->id);
-
-				/*if (router_icmp_hdr->type==ICMP_ECHO_REPLY && router_icmp_hdr->id==ID ) {
-					sequence = router_icmp_hdr->seq;
-					responses[sequence].isReceived_ICMP_ECHO_REPLY = true;
-					WSAResetEvent(event_icmp);
-					printf("ICMP ECHO REPLY at sequence %d \n",sequence);
-					timeouts_interval.push_back(t);
-					break;
-				}*/
-
-
-				
-				
-				/*if (orig_icmp_hdr->seq != index_of_awaited_packet && responses[index_of_awaited_packet].num_probes<3) {
-					Timeouts timeout;
-					timeout.index = index_of_awaited_packet;
-					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
-					timeout.timeout = timeout_expected_for_new_retransmission;
-					timeouts_interval.push_back(timeout);
-				}*/
-
 				printf("<-- * code %d and type %d PROTOCOL is %d id is %d sequence %d \n", router_icmp_hdr->code, router_icmp_hdr->type, orig_ip_hdr->proto, orig_icmp_hdr->id,orig_icmp_hdr->seq);
 				//sequence always from original icmp hdr
-				
 				//first time when ICMP_ECHO_RESPONSE IS RECEIVED, handle it
 				if ((router_icmp_hdr->type==ICMP_TTL_EXPIRED || router_icmp_hdr->type==ICMP_DEST_UNREACH || router_icmp_hdr->type==ICMP_ECHO_REPLY) && router_icmp_hdr->code==0 )
 				{		
@@ -345,19 +329,22 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 							if (thread_updater[orig_icmp_hdr->seq].joinable()) {
 								thread_updater[orig_icmp_hdr->seq].join();
 							}
+							found_new = true;
 							thread_updater[orig_icmp_hdr->seq] = thread(thread_get_host_info, orig_icmp_hdr->seq, ip);
 						}
 					}
 				}
 				WSAResetEvent(event_icmp);
+				if (!found_new) {
+					timeouts_interval.push_back(t);
+				}
 				break;
 			}
-			case WAIT_TIMEOUT: {
+			case WAIT_TIMEOUT: 
+			{
 				//if packet that we are expecting has not been received, then only retransmit, and the number of probes for this should be less than 3
-				
 				printf("Total size on select is 0\n");
 				cnt++;
-				
 				if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 &&
 					responses[index_of_awaited_packet].isReceived_ICMP_ECHO_REPLY==false
 					&& index_of_awaited_packet<largest_index_echo_reply) 
@@ -380,11 +367,13 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 				}
 				break;
 		}
+
 	} //switch statement
-		
+		if (timeouts_interval.size() == 0) {
+			return 1;
+		}
 	}	
 }
-
 
 int main(int argc, char *argv[]){
 		
@@ -417,20 +406,6 @@ int main(int argc, char *argv[]){
 	std::make_heap(timeouts_interval.begin(), timeouts_interval.end(),GREATER());
 
 
-	//*******************************************************
-
-
-	// ********IP ADDRESS FROM HOST *****************
-	
-
-	//*********** SERVER CODE *******************
-	
-	
-	
-	//*************************************************************
-	
-
-
 	//************SEND ICMP BUFFER******************************
 	//send all the icmp packets immediately (30 packets)
 	for (int ttl = 0; ttl < 30; ttl++) {
@@ -457,15 +432,15 @@ int main(int argc, char *argv[]){
 
 	printf("\n\nFinal Results\n\n");
 	if (largest_index_echo_reply == -1) {
-		largest_index_echo_reply = 28;
+		largest_index_echo_reply = 29;
 	}
-	for (int i = 1; i <largest_index_echo_reply+1; i++) {
+	for (int i = 1; i <= largest_index_echo_reply; i++) {
 		
 		if (responses[i].isReceived == true) {
 			printf("%d\t%s\t(%s)\t%0.3f ms\t(%d)\n", responses[i].ttl,  responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
 		}
 		else if(responses[i].isReceived==false){
-			printf("%d\t*\n",i);
+			printf("%d\t* %d\n",i,responses[i].num_probes);
 		}
 	}
 }
