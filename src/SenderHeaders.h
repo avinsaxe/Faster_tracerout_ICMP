@@ -65,8 +65,7 @@ public:
 	int num_probes=0;
 	uint64_t time_sent;  //microseconds
 	uint64_t time_received;  //microseconds
-	bool isReceived;
-	bool isReceived_ICMP_ECHO_REPLY=false;
+	bool isReceived=false;
 };
 
 class Timeouts {
