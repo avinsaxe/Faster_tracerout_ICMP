@@ -39,6 +39,8 @@ static int thread_num = 0;
 DWORD ID = GetCurrentProcessId();
 SOCKET sock;
 HANDLE event_icmp = WSACreateEvent();
+static bool can_end_on_timeout = false;
+static int largest_index_echo_reply = -1;
 
 struct GREATER {
 	bool operator()(const Timeouts&a, const Timeouts&b) const
@@ -61,6 +63,7 @@ Timeouts get_root_from_min_heap() {
 }
 
 //works correctly
+//href:// taken from my code in hw2
 sockaddr_in fetchServer(char* host)
 {
 	struct sockaddr_in remote;
@@ -179,7 +182,6 @@ void thread_get_host_info(int index,char *ip) {
 	if (host_name == NULL) {
 		char *n = "< no DNS entry >";
 		responses[index].host_name = n;
-		printf("Yo\n");
 		return;
 	}
 	char* host= getnamefromip(host_name->h_name);
@@ -192,7 +194,6 @@ void thread_get_host_info(int index,char *ip) {
 	else {
 		char *n = "< no DNS entry >";
 		responses[index].host_name = n;
-		printf("Yo\n");
 	}
 }
 
@@ -267,10 +268,8 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 		if (timeouts_interval.size() == 0) {
 			printf("No elements to wait\n");
 			return 1;
-		}
-				
+		}				
 		DWORD timeout = 1000;
-		
 		//update_min_timeout_for_not_received_packet();  //this always removes an element
 		int totalSizeOnSelect = WSAEventSelect(sock,event_icmp,FD_READ);
 		if (totalSizeOnSelect == SOCKET_ERROR) {
@@ -320,9 +319,16 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 				{		
 					if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
 						responses[orig_icmp_hdr->seq].isReceived_ICMP_ECHO_REPLY = true;
+						if (orig_icmp_hdr->seq > largest_index_echo_reply) {
+							largest_index_echo_reply = orig_icmp_hdr->seq;
+						}
 					}
 					else {
 						responses[orig_icmp_hdr->seq].isReceived_ICMP_ECHO_REPLY = false;
+						if (orig_icmp_hdr->seq > largest_index_echo_reply) {
+							largest_index_echo_reply = -1; //reset the largest
+						}
+						//can_end_on_timeout = false;
 					}
 
 					if (orig_ip_hdr->proto == IPPROTO_ICMP) {
@@ -348,11 +354,13 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 			}
 			case WAIT_TIMEOUT: {
 				//if packet that we are expecting has not been received, then only retransmit, and the number of probes for this should be less than 3
+				
 				printf("Total size on select is 0\n");
 				cnt++;
-				return 1;
-				/*if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 &&
-					responses[index_of_awaited_packet].isReceived_ICMP_ECHO_REPLY==false) 
+				
+				if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 &&
+					responses[index_of_awaited_packet].isReceived_ICMP_ECHO_REPLY==false
+					&& index_of_awaited_packet<largest_index_echo_reply) 
 				{
 					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
 					responses[index_of_awaited_packet].num_probes++;
@@ -369,7 +377,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 					{
 						status = send_icmp_packet(index_of_awaited_packet, sock, remote);
 					}
-				}*/
+				}
 				break;
 		}
 	} //switch statement
@@ -448,19 +456,16 @@ int main(int argc, char *argv[]){
 	}
 
 	printf("\n\nFinal Results\n\n");
-	bool stop_print = false;
-	for (int i = 1; i < responses.size(); i++) {
-		if (stop_print) {
-			return 1;
-		}
+	if (largest_index_echo_reply == -1) {
+		largest_index_echo_reply = 28;
+	}
+	for (int i = 1; i <largest_index_echo_reply+1; i++) {
+		
 		if (responses[i].isReceived == true) {
 			printf("%d\t%s\t(%s)\t%0.3f ms\t(%d)\n", responses[i].ttl,  responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
 		}
 		else if(responses[i].isReceived==false){
 			printf("%d\t*\n",i);
-		}
-		if (responses[i].isReceived_ICMP_ECHO_REPLY) {
-			stop_print = true;
 		}
 	}
 }
