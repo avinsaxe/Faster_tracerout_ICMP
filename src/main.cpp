@@ -146,7 +146,7 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 		printf("WSAERROR  %d \n", WSAGetLastError());
 		return 1;
 	}
-	printf("--> sequence %d, id %d,  ttl %d and status %d\n", icmp->seq,icmp->id, ttl,sendtostatus);
+	//printf("--> sequence %d, id %d,  ttl %d and status %d\n", icmp->seq,icmp->id, ttl,sendtostatus);
 	return sendtostatus;
 }
 
@@ -290,7 +290,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 			case WAIT_TIMEOUT:
 			{
 				//if packet that we are expecting has not been received, then only retransmit, and the number of probes for this should be less than 3
-				printf("Total size on select is 0\n");
+				//printf("Total size on select is 0\n");
 				cnt++;
 				if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 && index_of_awaited_packet<smallest_index_echo_response)
 				{
@@ -331,7 +331,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 						//handle ICMP ECHO REPLY
 						if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
 							
-							printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", router_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, router_ip_hdr->proto, router_icmp_hdr->id);
+							//printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", router_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, router_ip_hdr->proto, router_icmp_hdr->id);
 							
 							if (router_icmp_hdr->id==ID && !responses[router_icmp_hdr->seq].isReceived) {
 								
@@ -342,7 +342,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 								sockaddr_in dns_sock;
 								dns_sock.sin_addr.s_addr = ip_address_of_router;
 								char* ip = inet_ntoa(dns_sock.sin_addr);
-								printf(" %s \n", ip);
+								//printf(" %s \n", ip);
 								//Ping_Results ping_result;
 								responses[router_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 								responses[router_icmp_hdr->seq].ttl = router_icmp_hdr->seq;  //sequence number of packet sent
@@ -365,13 +365,13 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 						{
 							if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false) 
 							{
-								printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", orig_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, orig_ip_hdr->proto, orig_icmp_hdr->id);
+								//printf("<-- *[%d] code %d and type %d PROTOCOL is %d id is %d \n", orig_icmp_hdr->seq, router_icmp_hdr->code, router_icmp_hdr->type, orig_ip_hdr->proto, orig_icmp_hdr->id);
 
 								u_long ip_address_of_router = router_ip_hdr->source_ip;
 								sockaddr_in dns_sock;
 								dns_sock.sin_addr.s_addr = ip_address_of_router;
 								char* ip = inet_ntoa(dns_sock.sin_addr);
-								printf(" %s \n", ip);
+								//printf(" %s \n", ip);
 								//Ping_Results ping_result;
 								responses[orig_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 								responses[orig_icmp_hdr->seq].ttl = orig_icmp_hdr->seq;  //sequence number of packet sent
@@ -408,6 +408,46 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 	}	
 }
 
+char* extract_url(string host) {
+	if (host.length() == 0) {
+		return "";
+	}
+	int i1=host.find("http://");
+	int i2=host.find("https://");
+	//removed http and https
+	if (i2 >= 0) {
+		host = host.substr(i2+5+3,host.length());
+	}
+	else if (i1 >= 0) {
+		host = host.substr(i1 + 4+3, host.length());
+	}
+	int index_of_dot = host.find_last_of(".");
+	string temp = "";
+	temp = host.substr(0, index_of_dot + 1);
+	for (int i = temp.length(); i < host.length(); i++) {
+		if (host[i] != '?' && host[i] != '#' && host[i] != '/') {
+			temp = temp + host[i];
+		}
+		else {
+			break;
+		}
+	}
+	char *temp_ch = (char*)malloc(temp.length()+1);
+	strcpy(temp_ch,temp.c_str());
+	printf("%s", temp_ch);
+	return temp_ch;	
+}
+string convert_char_to_string(char* arr) {
+	if (arr == NULL || strlen(arr)==0) {
+		return "";
+	}
+	string temp = "";
+	for (int i = 0; i < strlen(arr); i++) {
+		temp += arr[i];
+	}
+	return temp;
+}
+
 int main(int argc, char *argv[]){
 		
 	if (argc != 2) {
@@ -421,6 +461,8 @@ int main(int argc, char *argv[]){
 		return 1;
 	}
 	char* destination_ip = argv[1];
+	string ipstr = convert_char_to_string(destination_ip);
+	destination_ip = extract_url(ipstr);
 	struct sockaddr_in remote = fetchServer(destination_ip);
 
 
