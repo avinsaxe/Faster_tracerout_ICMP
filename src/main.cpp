@@ -27,9 +27,8 @@ using namespace std;
 
 //href:// taken from HW1 submission of my own code
 long rto=0;
-Timeouts t;
+Timeouts t;   //contains time in milliseconds
 
-struct timeval timeout;
 int index_of_awaited_packet = 0;
 vector<Ping_Results> responses(30);
 //vector<long> time_packets_sent(30);
@@ -41,6 +40,7 @@ SOCKET sock;
 HANDLE event_icmp = WSACreateEvent();
 static bool can_end_on_timeout = false;
 static int smallest_index_echo_response = 29;
+int total_sent = 0;
 
 struct GREATER {
 	bool operator()(const Timeouts&a, const Timeouts&b) const
@@ -146,6 +146,7 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 		printf("WSAERROR  %d \n", WSAGetLastError());
 		return 1;
 	}
+	total_sent++;
 	//printf("--> sequence %d, id %d,  ttl %d and status %d\n", icmp->seq,icmp->id, ttl,sendtostatus);
 	return sendtostatus;
 }
@@ -201,18 +202,11 @@ void thread_get_host_info(int index,char *ip) {
 
 //updates index_of_awaited_packets based on min timeout. This updates the timeout as well
 void update_min_timeout_for_not_received_packet() {
-	while (timeouts_interval.size()>0) {
-
+	if(timeouts_interval.size()>0) {
 		t = get_root_from_min_heap();
 		rto = t.timeout;  //starting rto is 500 ms i.e. 500000 microseconds
 		index_of_awaited_packet = t.index;
 		rto = rto * 1e3;		
-		timeout.tv_sec = (long)((double)rto / 1e6);
-		timeout.tv_usec = rto;
-		return;
-		/*if (responses[index_of_awaited_packet].time_received == 0) {  //if this is the timeout consideration for packet that has not been received, we can go to the packet
-			return;
-		}*/
 	}
 }
 
@@ -227,7 +221,7 @@ long getTimeoutForRetransmissionPacket(int index) {
 			timeout= (long)(1 * (responses[1].time_received - responses[1].time_sent)/(double)(1e3));  //same as the average time to receive from the next socket
 		}
 		else {
-			timeout= 500;  //instead of 500 come up with something
+			timeout= 100;  //instead of 500 come up with something
 		}
 	}
 	else if (index == 29) {
@@ -235,7 +229,7 @@ long getTimeoutForRetransmissionPacket(int index) {
 			timeout=(long)(2 * (responses[28].time_received - responses[28].time_sent)/(double)1e3);
 		}
 		else {
-			timeout=1000;  //instead of this comeup with something
+			timeout=100;  //instead of this comeup with something
 		}
 	}
 	else {
@@ -249,10 +243,10 @@ long getTimeoutForRetransmissionPacket(int index) {
 			timeout= (long)(((responses[index + 1].time_received - responses[index + 1].time_sent))/(double)1e3);
 		}
 		else {
-			timeout= 500l;
+			timeout= 100l;
 		}
 	}
-
+	printf("\t\t computed timeout %li",timeout);
 	return timeout;
 }
 
@@ -275,8 +269,8 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 
 		//setup retransmission timeout
 		update_min_timeout_for_not_received_packet();
-		DWORD retx_timeout = (DWORD)(timeout.tv_usec/(double)(1e3));
-		//printf("Retransmission timeout %d \n", retx_timeout);
+		DWORD retx_timeout = (DWORD)(t.timeout);  //timeout in milliseconds
+		printf("Retransmission timeout %d \n", retx_timeout);
 
 
 		int totalSizeOnSelect = WSAEventSelect(sock,event_icmp,FD_READ);
@@ -504,7 +498,7 @@ int main(int argc, char *argv[]){
 			thread_updater[i].join();
 		}
 	}
-
+	printf("Total packets sent %d ", total_sent);
 	printf("\n\nFinal Results\n\n");
 	
 	for (int i = 1; i <= smallest_index_echo_response; i++) {
