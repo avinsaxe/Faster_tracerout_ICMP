@@ -59,33 +59,22 @@ Timeouts get_root_from_min_heap() {
 	///(timeouts.begin(), timeouts.end(), GREATER());
 	return t;
 }
-void print_results() {
-	for (int i = 0; i < responses.size(); i++) {
-		Ping_Results pr = responses[i];
-		int ttl=pr.ttl;
-		char* host_name=pr.host_name;
-		char* ip=pr.ip;
-		int num_probes=pr.num_probes;
-		double rtt=pr.rtt;
-		
-		printf("%d\t%s (%s) %.3f ms (%d)",ttl,host_name,ip,rtt,num_probes);
-	}
-}
+
 
 sockaddr_in fetchServer(char* host)
-{
-	
+{	
 	memset(&remote, 0, sizeof(struct sockaddr_in));	
 	in_addr addr;
 	char *hostAddr;
-	
+	printf("Host is %s\n", host);	
 	DWORD dwRetVal = inet_addr(host);
-	struct hostent *host_ent = gethostbyname(host);
 	if (dwRetVal == INADDR_NONE)
 	{
+		struct hostent *host_ent = gethostbyname(host);
 		if (host_ent != NULL)
 		{
 			addr.s_addr = *(u_long *)host_ent->h_addr;	//Taken from   https://msdn.microsoft.com/en-us/library/ms738524(VS.85).aspx 
+			memcpy((char*)(&remote.sin_addr), host_ent->h_addr, host_ent->h_length);
 		}
 		else if (host_ent == NULL)
 		{
@@ -93,7 +82,7 @@ sockaddr_in fetchServer(char* host)
 			exit(-1);
 		}
 		//cout << inet_ntoa(addr)<<endl;
-		memcpy((char*)(&remote.sin_addr), host_ent->h_addr, host_ent->h_length);
+		
 	}
 	else {
 		remote.sin_addr.S_un.S_addr = dwRetVal;
@@ -108,7 +97,6 @@ sockaddr_in fetchServer(char* host)
 //href:// taken from hw4 code pdf
 u_short ip_checksum(u_short *buffer, int size)
 {
-
 	u_long cksum = 0;
 	/* sum all the words together, adding the final byte if size is odd */
 	while (size > 1)
@@ -157,7 +145,6 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 		exit(1);
 	}
 	printf("--> id %d, sequence %d, ttl %d and status %d\n", icmp->id, icmp->seq, ttl,sendtostatus);
-//	printf("--> id %d, sequence %d, ttl %d and status %d\n", icmp->id, icmp->seq, ip_h->ttl,sendtostatus);
 	return sendtostatus;
 }
 
@@ -166,8 +153,6 @@ int send_icmp_packet(int ttl, SOCKET sock, struct sockaddr_in remote) {
 char* getnamefromip(char* ip) {
 	//href:// msdn https://msdn.microsoft.com/en-us/library/windows/desktop/ms738532(v=vs.85).aspx
 	DWORD dwRetval;
-	printf("IPSSSSS IS %s", ip);
-	
 	struct sockaddr_in sock_addr;
 	char *hostname;
 	hostname=(char*)malloc(NI_MAXHOST*sizeof(char));
@@ -177,8 +162,6 @@ char* getnamefromip(char* ip) {
 	sock_addr.sin_addr.s_addr = inet_addr(ip);
 	sock_addr.sin_port = htons(port);
 	dwRetval = getnameinfo((struct sockaddr *) &sock_addr,sizeof(struct sockaddr),hostname,NI_MAXHOST, servInfo, NI_MAXSERV, NI_NUMERICSERV);
-	printf("\n%s", hostname);
-	
 	if (dwRetval != 0) {
 		return "";
 	}
@@ -191,7 +174,7 @@ void thread_get_host_info(int index,char *ip) {
 	if (ip == NULL) {
 		return;
 	}
-	printf("\n\nUpdate thread %d %s \n\n", index,ip);
+	//printf("\n\nUpdate thread %d %s \n\n", index,ip);
 	hostent *host_name = gethostbyname(ip);
 	if (host_name != NULL)
 		responses[index].ip = host_name->h_name;
@@ -202,13 +185,6 @@ void thread_get_host_info(int index,char *ip) {
 
 	if(host!=NULL)
 		responses[index].host_name = host;
-	
-	
-	printf("\n\n******  %s *********\n\n", host);
-
-	printf("<-- sequence %d, host %s, ip %s, num_probes %d, rtt %.3f, packet_sent_time %li, packet_received_time %li \n", index, responses[index].host_name,responses[index].ip,responses[index].num_probes,responses[index].rtt,responses[index].time_sent,responses[index].time_received);
-	
-
 }
 
 //updates index_of_awaited_packets based on min timeout. This updates the timeout as well
@@ -217,9 +193,7 @@ void update_min_timeout_for_not_received_packet() {
 		t = get_root_from_min_heap();
 		rto = t.timeout;  //starting rto is 500 ms i.e. 500000 microseconds
 		index_of_awaited_packet = t.index;
-		rto = 5000;
-		rto = rto * 1e3;
-		
+		rto = rto * 1e3;		
 		timeout.tv_sec = (long)((double)rto / 1e6);
 		timeout.tv_usec = rto;
 		if (responses[index_of_awaited_packet].time_received == 0) {  //if this is the timeout consideration for packet that has not been received, we can go to the packet
@@ -271,29 +245,27 @@ long getTimeoutForRetransmissionPacket(int index) {
 
 
 int receive_icmp_response(SOCKET sock) {
-	
 	int first_response_not_received = 0;
 	fd_set fd;
 	int cnt = 0;
 	while (true) 
 	{		
 		cnt++;		
-		DWORD timeout = 50000;
+		DWORD timeout = 500;
 		FD_ZERO(&fd);
 		FD_SET(sock, &fd);
+		if (timeouts_interval.size() == 0) {
+			return 0;
+		}
 		update_min_timeout_for_not_received_packet();
-		//this function updates the timeout as well
-
-		//int totalSizeOnSelect = select(0, &fd, NULL, NULL, &timeout);		
 		int totalSizeOnSelect = WSAEventSelect(sock,event_icmp,FD_READ);
-
 		if (totalSizeOnSelect == SOCKET_ERROR) {
 			printf("Select failed with %d \n", WSAGetLastError());
 			return SOCKET_ERROR;
 		}
-
-
+		
 		int select = WaitForSingleObject(event_icmp,timeout);
+		
 		switch (select) 
 		{
 		case WAIT_OBJECT_0: 
@@ -304,64 +276,19 @@ int receive_icmp_response(SOCKET sock) {
 				printf("Error in receive %d \n", WSAGetLastError());
 				return recv;
 			}
-
-
 			IPHeader *router_ip_hdr = (IPHeader *)rec_buf;
 			ICMPHeader *router_icmp_hdr = (ICMPHeader *)(router_ip_hdr + 1);
-			printf("--> * code %d and type %d\n", router_icmp_hdr->code, router_icmp_hdr->type);
-			if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
-				printf("Hoorahhh !! TYPE IS ECHO_REPLY\n");
-				//echo replies only have 28 bytes of the packet, and hence only routers sequence and id can be extracted, which should be same as our own
-				int sequence = router_icmp_hdr->seq;
-				if (router_icmp_hdr->id == ID) {
-					if (sequence >= first_response_not_received) {
-						printf("Received echo reply from a router which is at some hops away. All previous are already computed\n");
-						return 1;
-					}
+			printf("<-- * code %d and type %d ", router_icmp_hdr->code, router_icmp_hdr->type);
+			IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
+			ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
+			printf("PROTOCOL is %d id is %d\n", orig_ip_hdr->proto, orig_icmp_hdr->id);
+			if (router_icmp_hdr->type == ICMP_ECHO_REPLY || router_icmp_hdr->type==ICMP_TTL_EXPIRED || router_icmp_hdr->type==ICMP_DEST_UNREACH) 
+			{		
+				if (router_icmp_hdr->type == ICMP_ECHO_REPLY && orig_icmp_hdr->id==ID) {
+					printf("Echo reply received. Exiting \n");
+					return 0;
 				}
-			}
-
-			if (router_icmp_hdr->code == (u_char)3) {
-				printf("Hoorahhh !! Code is 3\n");
-				IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
-				ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
 				int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
-				if (responses[sequence].isReceived == true) {
-				}
-				else if (orig_ip_hdr->proto == IPPROTO_ICMP)
-				{
-					// check if process ID matches
-					if (orig_icmp_hdr->id == ID) {
-						u_long ip_address_of_router = router_ip_hdr->source_ip;
-						sockaddr_in dns_sock;
-						dns_sock.sin_addr.s_addr = ip_address_of_router;
-						char* ip = inet_ntoa(dns_sock.sin_addr);
-
-						//Ping_Results ping_result;
-
-						responses[sequence].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-						responses[sequence].ttl = sequence;  //sequence number of packet sent
-						responses[sequence].rtt = ((double)(responses[sequence].time_received - responses[sequence].time_sent) / (1e3));
-						responses[sequence].isReceived = true;
-						thread_updater[sequence] = thread(thread_get_host_info, sequence, ip);
-						thread_updater[sequence].detach();
-						if (sequence == first_response_not_received) {
-							first_response_not_received++;
-						}
-						return 0;
-
-					}
-				}
-			}
-
-			if (router_icmp_hdr->type == ICMP_TTL_EXPIRED && router_icmp_hdr->code == (u_char)0)
-			{
-				printf("Hoorahhh !! TTL EXPIRED Code is 0\n");
-				IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
-				ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
-
-				int sequence = orig_icmp_hdr->seq;   //sequence number is the ttl
-													 //cout << "Sequence Received " << sequence << endl;
 				if (responses[sequence].isReceived == true) {
 				}
 				else if (orig_ip_hdr->proto == IPPROTO_ICMP)
@@ -375,12 +302,10 @@ int receive_icmp_response(SOCKET sock) {
 						char* ip = inet_ntoa(dns_sock.sin_addr);
 
 						//Ping_Results ping_result;
-
 						responses[sequence].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 						responses[sequence].ttl = sequence;  //sequence number of packet sent
 						responses[sequence].rtt = ((double)(responses[sequence].time_received - responses[sequence].time_sent) / (1e3));
 						responses[sequence].isReceived = true;
-						printf("***** ip is %s", ip);
 						thread_updater[sequence] = thread(thread_get_host_info, sequence, ip);
 						thread_updater[sequence].detach();
 						if (sequence == first_response_not_received) {
@@ -472,7 +397,6 @@ int main(int argc, char *argv[]){
 	//*****************************************************
 
 	//*********** SERVER CODE *******************
-	printf("Target host string %s", targetHost);
 	remote= fetchServer(targetHost);
 
 	
@@ -489,14 +413,29 @@ int main(int argc, char *argv[]){
 		//update of future_retx_times
 		Timeouts timeout;
 		timeout.index = ttl - 1;
-		timeout.timeout = 5000000;
-
+		timeout.timeout = 500;
 		timeouts_interval.push_back(timeout);
 		//sending part
 		int status = -1;
 		status = send_icmp_packet(ttl, sock, remote);
 	}
 	receive_icmp_response(sock);
+	for (int i = 0; i < 30; i++) {
+		if (thread_updater[i].joinable())
+		{
+			thread_updater[i].join();
+		}
+	}
+
+	printf("\n\nFinal Results\n\n");
+	for (int i = 0; i < responses.size(); i++) {
+		if (responses[i].isReceived == true) {
+			printf("%d\t%s\t(%s)\t%li ms\t(%d)\n", responses[i].ttl, responses[i].ip, responses[i].host_name, responses[i].rtt, responses[i].num_probes);
+		}
+		else {
+			printf("%d\t*\n",i+1);
+		}
+	}
 	
 }
 
