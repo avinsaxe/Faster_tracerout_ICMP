@@ -42,6 +42,11 @@ static bool can_end_on_timeout = false;
 static int smallest_index_echo_response = 29;
 int total_sent = 0;
 
+//these are times in milliseconds
+double per_hop_timeout = 0;
+double timeout_delta = 10.0;
+int n = 0;
+
 struct GREATER {
 	bool operator()(const Timeouts&a, const Timeouts&b) const
 	{
@@ -173,11 +178,30 @@ char* getnamefromip(char* ip) {
 	}
 }
 
+void update_per_hop_timeouts(int index) {
+	n++;
+	double time_to_receive = (long)(responses[index].time_received - responses[index].time_sent) / ((double)1e3);
+	double time_per_hop_current = 0.0;
+	if (index != 0) {
+		time_per_hop_current = (double)(time_to_receive) / index;
+	}
+	printf("Time per hop current %0.3f\n", time_per_hop_current);
+	double c = (double)(((n - 1)*per_hop_timeout + 1 * (time_per_hop_current)));
+	printf("c is %0.3f", c);
+	c = c / n;
+	per_hop_timeout = c;
+}
+
 void thread_get_host_info(int index,char *ip) {
 	if (ip == NULL) {
 		return;
 	}
-		
+
+	//********************************************************************
+	//compute the per_hop_timeouts
+	update_per_hop_timeouts(index);
+	//*********************************************************************
+
 	//printf("\n\nUpdate thread %d %s \n\n", index,ip);
 	hostent *host_name = gethostbyname(ip);
 	if (host_name == NULL) {
@@ -208,6 +232,18 @@ void update_min_timeout_for_not_received_packet() {
 		index_of_awaited_packet = t.index;
 		rto = rto * 1e3;		
 	}
+}
+
+long getTimeoutForRetransmissionPacket2(int index) {
+	if (!(index >= 0 && index < 30)) {
+		return 0;
+	}
+	printf("\t\t\t index %d, per_hop_timeout %li", index, per_hop_timeout);
+	double timeout_d=(index * per_hop_timeout) + timeout_delta;
+	long timeout = (long)timeout_d;
+	cout << "\t\tTimeout" << timeout << endl;
+	return timeout;
+	
 }
 
 //1e3 added because I changed time computation to microseconds
@@ -288,7 +324,8 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 				cnt++;
 				if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 && index_of_awaited_packet<smallest_index_echo_response)
 				{
-					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
+					//long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
+					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket2(index_of_awaited_packet);
 					responses[index_of_awaited_packet].num_probes++;
 					responses[index_of_awaited_packet].time_sent = timeGetTime();
 					rto = timeout_expected_for_new_retransmission;
