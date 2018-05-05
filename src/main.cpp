@@ -185,9 +185,9 @@ void update_per_hop_timeouts(int index) {
 	if (index != 0) {
 		time_per_hop_current = (double)(time_to_receive) / index;
 	}
-	printf("Time per hop current %0.3f\n", time_per_hop_current);
+	//printf("Time per hop current %0.3f\n", time_per_hop_current);
 	double c = (double)(((n - 1)*per_hop_timeout + 1 * (time_per_hop_current)));
-	printf("c is %0.3f", c);
+	//printf("c is %0.3f", c);
 	c = c / n;
 	per_hop_timeout = c;
 }
@@ -238,10 +238,10 @@ long getTimeoutForRetransmissionPacket2(int index) {
 	if (!(index >= 0 && index < 30)) {
 		return 0;
 	}
-	printf("\t\t\t index %d, per_hop_timeout %li", index, per_hop_timeout);
+	//printf("\t\t\t index %d, per_hop_timeout %li", index, per_hop_timeout);
 	double timeout_d=(index * per_hop_timeout) + timeout_delta;
 	long timeout = (long)timeout_d;
-	cout << "\t\tTimeout" << timeout << endl;
+	//cout << "\t\tTimeout" << timeout << endl;
 	return timeout;
 	
 }
@@ -282,7 +282,7 @@ long getTimeoutForRetransmissionPacket(int index) {
 			timeout= 100l;
 		}
 	}
-	printf("\t\t computed timeout %li",timeout);
+	//printf("\t\t computed timeout %li",timeout);
 	return timeout;
 }
 
@@ -306,7 +306,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 		//setup retransmission timeout
 		update_min_timeout_for_not_received_packet();
 		DWORD retx_timeout = (DWORD)(t.timeout);  //timeout in milliseconds
-		printf("Retransmission timeout %d \n", retx_timeout);
+		//printf("Retransmission timeout %d \n", retx_timeout);
 
 
 		int totalSizeOnSelect = WSAEventSelect(sock,event_icmp,FD_READ);
@@ -481,7 +481,7 @@ string convert_char_to_string(char* arr) {
 
 int main(int argc, char *argv[]){
 		
-	if (argc != 2) {
+	if (argc != 2 && argc!=3) {
 		printf("Invalid number of arguments \n");
 		return 1;
 	}
@@ -491,61 +491,65 @@ int main(int argc, char *argv[]){
 		cout << "Main:\t WSAStartup Failed " << WSAGetLastError() << endl;
 		return 1;
 	}
-	char* destination_ip = argv[1];
-	string ipstr = convert_char_to_string(destination_ip);
-	destination_ip = extract_url(ipstr);
-	struct sockaddr_in remote = fetchServer(destination_ip);
+	//batch mode
+	if (argc == 3) {
 
-
-	sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-	if (sock == INVALID_SOCKET)
-	{
-		printf("Unable to create a raw socket: error %d\n", WSAGetLastError());
-		WSACleanup();
-		return 1;
 	}
-	
+	if (argc == 2) {  //normal mode
+		char* destination_ip = argv[1];
+		string ipstr = convert_char_to_string(destination_ip);
+		destination_ip = extract_url(ipstr);
+		struct sockaddr_in remote = fetchServer(destination_ip);
 
-	//************MAKE THE HEAP FOR TIMEOUTS********************
-	
-	//line that makes a min heap
-	std::make_heap(timeouts_interval.begin(), timeouts_interval.end(),GREATER());
 
-
-	//************SEND ICMP BUFFER******************************
-	//send all the icmp packets immediately (30 packets)
-	for (int ttl = 0; ttl < 30; ttl++) {
-		responses[ttl].num_probes++;
-		responses[ttl].time_sent = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-		//update of future_retx_times
-		Timeouts timeout;
-		timeout.index = ttl;
-		timeout.timeout = 500;
-		timeouts_interval.push_back(timeout);
-		//sending part
-		int status = -1;
-		status = send_icmp_packet(ttl, sock, remote);
-		
-	}
-	receive_icmp_response(sock, remote);
-	
-	for (int i = 0; i < 30; i++) {
-		if (thread_updater[i].joinable())
+		sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+		if (sock == INVALID_SOCKET)
 		{
-			thread_updater[i].join();
+			printf("Unable to create a raw socket: error %d\n", WSAGetLastError());
+			WSACleanup();
+			return 1;
+		}
+
+
+		//************MAKE THE HEAP FOR TIMEOUTS********************
+
+		//line that makes a min heap
+		std::make_heap(timeouts_interval.begin(), timeouts_interval.end(), GREATER());
+
+
+		//************SEND ICMP BUFFER******************************
+		//send all the icmp packets immediately (30 packets)
+		for (int ttl = 0; ttl < 30; ttl++) {
+			responses[ttl].num_probes++;
+			responses[ttl].time_sent = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+			//update of future_retx_times
+			Timeouts timeout;
+			timeout.index = ttl;
+			timeout.timeout = 500;
+			timeouts_interval.push_back(timeout);
+			//sending part
+			int status = -1;
+			status = send_icmp_packet(ttl, sock, remote);
+
+		}
+		receive_icmp_response(sock, remote);
+
+		for (int i = 0; i < 30; i++) {
+			if (thread_updater[i].joinable())
+			{
+				thread_updater[i].join();
+			}
+		}
+		for (int i = 1; i <= smallest_index_echo_response; i++) {
+
+			if (responses[i].isReceived == true) {
+				printf("%d\t %s\t (%s)\t %0.3f ms\t(%d)\n", responses[i].ttl, responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
+			}
+			else if (responses[i].isReceived == false) {
+				printf("%d\t*\n", i);
+			}
 		}
 	}
-	printf("Total packets sent %d ", total_sent);
-	printf("\n\nFinal Results\n\n");
 	
-	for (int i = 1; i <= smallest_index_echo_response; i++) {
-		
-		if (responses[i].isReceived == true) {
-			printf("%d\t %s\t (%s)\t %0.3f ms\t(%d)\n", responses[i].ttl,  responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
-		}
-		else if(responses[i].isReceived==false){
-			printf("%d\t*\n",i);
-		}
-	}
 }
 
