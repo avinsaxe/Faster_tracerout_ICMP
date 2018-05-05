@@ -176,12 +176,13 @@ void thread_get_host_info(int index,char *ip) {
 	if (ip == NULL) {
 		return;
 	}
-	responses[index].ip = ip;
+		
 	//printf("\n\nUpdate thread %d %s \n\n", index,ip);
 	hostent *host_name = gethostbyname(ip);
 	if (host_name == NULL) {
 		char *n = "< no DNS entry >";
-		responses[index].host_name = n;
+		responses[index].host_name= (char*)malloc(NI_MAXHOST);
+		strcpy(responses[index].host_name, n);
 		return;
 	}
 	char* host= getnamefromip(host_name->h_name);
@@ -189,11 +190,14 @@ void thread_get_host_info(int index,char *ip) {
 	string s1 = string(ip);
 	string s2 = string(host);
 	areSame = s1.compare(s2) == 0;
+	responses[index].host_name = (char*)malloc(NI_MAXHOST);
 	if (host != NULL && !areSame)
-		responses[index].host_name = host;
+	{
+		strcpy(responses[index].host_name, host);
+	}
 	else {
 		char *n = "< no DNS entry >";
-		responses[index].host_name = n;
+		strcpy(responses[index].host_name, n);
 	}
 }
 
@@ -285,8 +289,34 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 		}		
 		int select = WaitForSingleObject(event_icmp,retx_timeout);
 		switch (select) 
-		{
-			
+		{			
+			case WAIT_TIMEOUT:
+			{
+				//if packet that we are expecting has not been received, then only retransmit, and the number of probes for this should be less than 3
+				printf("Total size on select is 0\n");
+				cnt++;
+				if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 &&
+					responses[index_of_awaited_packet].isReceived_ICMP_ECHO_REPLY == false
+					&& index_of_awaited_packet<largest_index_echo_reply)
+				{
+					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
+					responses[index_of_awaited_packet].num_probes++;
+					responses[index_of_awaited_packet].time_sent = timeGetTime();
+					rto = timeout_expected_for_new_retransmission;
+					rto = rto * 1e3;
+					Timeouts timeout;
+					timeout.index = index_of_awaited_packet;
+					timeout.timeout = timeout_expected_for_new_retransmission;
+					timeouts_interval.push_back(timeout);
+					//sending part
+					int status = -1;
+					if (responses[index_of_awaited_packet].isReceived == false)
+					{
+						status = send_icmp_packet(index_of_awaited_packet, sock, remote);
+					}
+				}
+				break;
+			}
 			case WAIT_OBJECT_0: 
 			{
 				bool found_new = false;
@@ -321,11 +351,16 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 							sockaddr_in dns_sock;
 							dns_sock.sin_addr.s_addr = ip_address_of_router;
 							char* ip = inet_ntoa(dns_sock.sin_addr);
+							printf("\n\n\n%s\n\n\n", ip);
 							//Ping_Results ping_result;
 							responses[orig_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 							responses[orig_icmp_hdr->seq].ttl = orig_icmp_hdr->seq;  //sequence number of packet sent
 							responses[orig_icmp_hdr->seq].rtt = ((double)(responses[orig_icmp_hdr->seq].time_received - responses[orig_icmp_hdr->seq].time_sent) / (1e3));
 							responses[orig_icmp_hdr->seq].isReceived = true;
+							
+							responses[orig_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
+							strcpy(responses[orig_icmp_hdr->seq].ip,ip);
+							
 							if (thread_updater[orig_icmp_hdr->seq].joinable()) {
 								thread_updater[orig_icmp_hdr->seq].join();
 							}
@@ -340,33 +375,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 				}
 				break;
 			}
-			case WAIT_TIMEOUT: 
-			{
-				//if packet that we are expecting has not been received, then only retransmit, and the number of probes for this should be less than 3
-				printf("Total size on select is 0\n");
-				cnt++;
-				if (responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 &&
-					responses[index_of_awaited_packet].isReceived_ICMP_ECHO_REPLY==false
-					&& index_of_awaited_packet<largest_index_echo_reply) 
-				{
-					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket(index_of_awaited_packet);
-					responses[index_of_awaited_packet].num_probes++;
-					responses[index_of_awaited_packet].time_sent = timeGetTime();
-					rto = timeout_expected_for_new_retransmission;
-					rto = rto * 1e3;
-					Timeouts timeout;
-					timeout.index = index_of_awaited_packet;
-					timeout.timeout = timeout_expected_for_new_retransmission;
-					timeouts_interval.push_back(timeout);
-					//sending part
-					int status = -1;
-					if (responses[index_of_awaited_packet].isReceived == false)
-					{
-						status = send_icmp_packet(index_of_awaited_packet, sock, remote);
-					}
-				}
-				break;
-		}
+			
 
 	} //switch statement
 		if (timeouts_interval.size() == 0) {
@@ -440,7 +449,7 @@ int main(int argc, char *argv[]){
 			printf("%d\t%s\t(%s)\t%0.3f ms\t(%d)\n", responses[i].ttl,  responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
 		}
 		else if(responses[i].isReceived==false){
-			printf("%d\t* %d\n",i,responses[i].num_probes);
+			printf("%d\t*\n",i);
 		}
 	}
 }
