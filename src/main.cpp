@@ -185,8 +185,11 @@ void thread_get_host_info(int index,char *ip) {
 		return;
 	}
 	char* host= getnamefromip(host_name->h_name);
-
-	if (host != NULL && strcmp(host,ip)!=0)
+	bool areSame = false;
+	string s1 = string(ip);
+	string s2 = string(host);
+	areSame = s1.compare(s2) == 0;
+	if (host != NULL && !areSame)
 		responses[index].host_name = host;
 	else {
 		char *n = "< no DNS entry >";
@@ -289,7 +292,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 				}
 				int sequence = 0;
 				
-				printf("***********Receive response %d and sequence is %d\n", recv,orig_icmp_hdr->seq);
+				printf("***********Receive response %d and sequence is %d id is %d\n", recv,orig_icmp_hdr->seq,orig_icmp_hdr->id);
 				if (router_icmp_hdr->type==ICMP_ECHO_REPLY) {
 					sequence = router_icmp_hdr->seq;
 					responses[sequence].isReceived_ICMP_ECHO_REPLY = true;
@@ -318,11 +321,6 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote)
 						responses[sequence].rtt = ((double)(responses[sequence].time_received - responses[sequence].time_sent) / (1e3));
 						responses[sequence].isReceived = true;
 						thread_updater[sequence] = thread(thread_get_host_info, sequence, ip);
-						if (thread_updater[sequence].joinable()) {
-							thread_updater[sequence].join();
-							printf("Next \n");
-						}
-						
 					}
 				}
 				WSAResetEvent(event_icmp);
