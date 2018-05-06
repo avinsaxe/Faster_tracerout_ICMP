@@ -101,11 +101,10 @@ Timeouts get_root_from_min_heap() {
 //href:// taken from my code in hw2
 bool fetchServer(char* host)
 {
-	
-	memset(&remote, 0, sizeof(struct sockaddr_in));	
-	in_addr addr;
 	char *hostAddr;
 	DWORD dwRetVal = inet_addr(host);
+	memset(&remote, 0, sizeof(struct sockaddr_in));	
+	in_addr addr;	
 	if (dwRetVal == INADDR_NONE)
 	{
 		struct hostent *host_ent = gethostbyname(host);
@@ -195,7 +194,7 @@ char* getnamefromip(char* ip) {
 	char *hostname;
 	hostname=(char*)malloc(NI_MAXHOST*sizeof(char));
 	char servInfo[NI_MAXSERV];
-	u_short port = 22191;
+	u_short port = 29239;
 	sock_addr.sin_family = AF_INET;
 	sock_addr.sin_addr.s_addr = inet_addr(ip);
 	sock_addr.sin_port = htons(port);
@@ -224,8 +223,8 @@ void update_per_hop_timeouts(int index) {
 void thread_get_host_info2(int index,char* ip) {
 	struct addrinfo	*output = 0;
 	int status = getaddrinfo(ip, 0, 0, &output);
-	char host[512], port[128];
-	int status2 = getnameinfo(output->ai_addr, output->ai_addrlen, host, 512, 0, 0, 0);
+	char host[NI_MAXHOST], port[128];
+	int status2 = getnameinfo(output->ai_addr, output->ai_addrlen, host, NI_MAXHOST, 0, 0, 0);
 	responses[index].host_name = (char*)malloc(NI_MAXHOST);
 	bool areSame = false;
 	areSame = strcmp(host, ip) == 0;
@@ -341,7 +340,6 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 	while (in_loop) 
 	{		
 		if (timeouts_interval.size() == 0) {
-			printf("No elements to wait\n");
 			return 1;
 		}		
 		//setup retransmission timeout
@@ -392,7 +390,6 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 					return recv;
 				}
 				//first time when ICMP_ECHO_RESPONSE IS RECEIVED, handle it
-
 				if (router_icmp_hdr->code == 0 && (router_icmp_hdr->type == ICMP_ECHO_REPLY || router_icmp_hdr->type == ICMP_TTL_EXPIRED))
 				{
 					if (orig_ip_hdr->proto == IPPROTO_ICMP)
@@ -512,18 +509,18 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 					}
 				}
 				WSAResetEvent(event_icmp);
-				if (!found_new) 
+				/*if (!found_new) 
 				{
 					timeouts_interval.push_back(t);
-				}
+				}*/
 				break;
 			}
 			
 
 	} //switch statement
-		if (timeouts_interval.size() == 0) {
+		/*if (timeouts_interval.size() == 0) {
 			return 1;
-		}
+		}*/
 	}	
 }
 
