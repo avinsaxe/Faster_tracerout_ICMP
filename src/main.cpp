@@ -352,8 +352,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 			printf("Select failed with %d \n", WSAGetLastError());
 			return SOCKET_ERROR;
 		}
-		printf("Retransmission timeout %d\n", (int)(retx_timeout));
-		retx_timeout = 50;
+		//printf("Retransmission timeout %d\n", (int)(retx_timeout));
 		int select = WaitForSingleObject(event_icmp,retx_timeout);
 		switch (select) 
 		{			
@@ -372,12 +371,12 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 						responses[i].time_sent= std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 						responses[i].num_probes++;
 						send_icmp_packet(i, sock, remote);
-						
 						Timeouts t;
 						t.index = i;
 						t.timeout=  getTimeoutForRetransmissionPacket2(i);
 						timeouts_interval.push_back(t);
 						atleast_one_retransmitted = true;
+						//printf("Retx --> %d and size of time_interval %d\n", i, timeouts_interval.size());
 					}
 				}
 				in_loop = atleast_one_retransmitted;
@@ -649,7 +648,7 @@ int main(int argc, char *argv[]){
 				//remove all packets from the timeouts_intervals
 				Timeouts timeout;
 				timeout.index = ttl;
-				timeout.timeout = 500;
+				timeout.timeout = 200;
 				timeouts_interval.push_back(timeout);
 				//sending part
 				int status = -1;
@@ -748,7 +747,7 @@ int main(int argc, char *argv[]){
 				thread_updater[i].join();
 			}
 		}
-		printf("Time taken for threads extra %0.3f\n", (double)(timeGetTime() - received_end) / (1e3));
+		printf("Time taken for threads extra for DNS lookups %0.3f\n", (double)(timeGetTime() - received_end) / (1e3));
 
 
 		DWORD end_time_nomral_mode = timeGetTime();
