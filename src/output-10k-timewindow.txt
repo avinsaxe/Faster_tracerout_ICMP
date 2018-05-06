@@ -1,0 +1,3 @@
+i = 1 time = 100 URLS = 4
+i = 2 time = 150 URLS = 2
+i = 6 time = 350 URLS = 1

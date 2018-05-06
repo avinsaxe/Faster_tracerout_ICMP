@@ -11,15 +11,15 @@ i = 9 URLS = 0
 i = 10 URLS = 0
 i = 11 URLS = 0
 i = 12 URLS = 0
-i = 13 URLS = 0
-i = 14 URLS = 0
+i = 13 URLS = 1
+i = 14 URLS = 2
 i = 15 URLS = 0
-i = 16 URLS = 0
+i = 16 URLS = 3
 i = 17 URLS = 0
 i = 18 URLS = 0
 i = 19 URLS = 0
 i = 20 URLS = 0
-i = 21 URLS = 0
+i = 21 URLS = 1
 i = 22 URLS = 0
 i = 23 URLS = 0
 i = 24 URLS = 0
@@ -28,3 +28,9 @@ i = 26 URLS = 0
 i = 27 URLS = 0
 i = 28 URLS = 0
 i = 29 URLS = 0
+i = 30 URLS = 0
+i = 31 URLS = 0
+i = 32 URLS = 0
+i = 33 URLS = 0
+i = 34 URLS = 3
+angryblackladychronicles.com

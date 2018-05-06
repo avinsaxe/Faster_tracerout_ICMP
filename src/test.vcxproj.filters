@@ -47,5 +47,7 @@
   <ItemGroup>
     <Text Include="10k_urls.txt" />
     <Text Include="output-10k.txt" />
+    <Text Include="output-10k-timewindow.txt" />
+    <Text Include="output-10k-unique-url.txt" />
   </ItemGroup>
 </Project>
