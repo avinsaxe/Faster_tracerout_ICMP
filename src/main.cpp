@@ -21,7 +21,7 @@
 
 #include <chrono>
 #include <cstdint>
-#define MAX_HOPS 35
+#define MAX_HOPS 30
 #define BATCH_MAX_SIZE 10001
 
 
@@ -227,7 +227,9 @@ void thread_get_host_info2(int index,char* ip) {
 	char host[512], port[128];
 	int status2 = getnameinfo(output->ai_addr, output->ai_addrlen, host, 512, 0, 0, 0);
 	responses[index].host_name = (char*)malloc(NI_MAXHOST);
-	if (host != NULL)
+	bool areSame = false;
+	areSame = strcmp(host, ip) == 0;
+	if (host != NULL && !areSame)
 	{
 		strcpy(responses[index].host_name, host);
 	}
@@ -274,7 +276,7 @@ void update_min_timeout_for_not_received_packet() {
 }
 
 long getTimeoutForRetransmissionPacket2(int index) {
-	if (!(index >= 0 && index < 30)) {
+	if (!(index >= 0 && index < MAX_HOPS)) {
 		return 0;
 	}
 	//printf("\t\t\t index %d, per_hop_timeout %li", index, per_hop_timeout);
@@ -335,8 +337,8 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 	ICMPHeader *router_icmp_hdr = (ICMPHeader *)(router_ip_hdr + 1);
 	IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
 	ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
-
-	while (cnt<3) 
+	bool in_loop = true;
+	while (in_loop) 
 	{		
 		if (timeouts_interval.size() == 0) {
 			printf("No elements to wait\n");
@@ -349,22 +351,36 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 		if (totalSizeOnSelect == SOCKET_ERROR) {
 			printf("Select failed with %d \n", WSAGetLastError());
 			return SOCKET_ERROR;
-		}		
+		}
+		printf("Retransmission timeout %d\n", (int)(retx_timeout));
+		retx_timeout = 50;
 		int select = WaitForSingleObject(event_icmp,retx_timeout);
 		switch (select) 
 		{			
 			case WAIT_TIMEOUT:
 			{
-				cnt++;
+				if (!check_dns) {//batch mode
+					break;
+				}
 				//retransmit all not received packets less than packet sequence at echo reply
+				bool atleast_one_retransmitted = false;
+				//remove everything from the timeouts_interval
+				timeouts_interval.clear();
 				for (int i = 1; i<=smallest_index_echo_response; i++) {
 					if (!responses[i].isReceived && responses[i].num_probes<3) {
 						responses[i].num_probes++;
 						responses[i].time_sent= std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 						responses[i].num_probes++;
 						send_icmp_packet(i, sock, remote);
+						
+						Timeouts t;
+						t.index = i;
+						t.timeout=  getTimeoutForRetransmissionPacket2(i);
+						timeouts_interval.push_back(t);
+						atleast_one_retransmitted = true;
 					}
 				}
+				in_loop = atleast_one_retransmitted;
 				/*if (check_dns &&  responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 && index_of_awaited_packet<smallest_index_echo_response)
 				{
 					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket2(index_of_awaited_packet);
@@ -611,9 +627,6 @@ int main(int argc, char *argv[]){
 		while (in) {
 			in.getline(destination_ips[index++],100000);
 		}
-
-
-
 		for (int i = 0; i < BATCH_MAX_SIZE; i++) {
 			reinit();
 			printf("IP* from array %s",destination_ips[i]);
@@ -633,6 +646,7 @@ int main(int argc, char *argv[]){
 				responses[ttl].num_probes++;
 				responses[ttl].time_sent = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
 				//update of future_retx_times
+				//remove all packets from the timeouts_intervals
 				Timeouts timeout;
 				timeout.index = ttl;
 				timeout.timeout = 500;
@@ -646,7 +660,7 @@ int main(int argc, char *argv[]){
 			if (batch_mode_received_echo == true) {
 				batch_counts_url_per_hop[smallest_index_echo_response]++;
 			}			
-			if (smallest_index_echo_response > 30 && batch_mode_received_echo==true) {
+			if (smallest_index_echo_response > MAX_HOPS && batch_mode_received_echo==true) {
 				batch_ip_with_more_than_30_hops=(char*)malloc(NI_MAXHOST);
 				printf("~~~~~~~~~~~~~~Found IP with more than 30 hops %s\n",batch_ip_with_more_than_30_hops);
 				strcpy(batch_ip_with_more_than_30_hops, destination_ip);
@@ -740,7 +754,7 @@ int main(int argc, char *argv[]){
 		DWORD end_time_nomral_mode = timeGetTime();
 		for (int i = 1; i <= smallest_index_echo_response; i++) {
 			if (responses[i].isReceived == true) {
-				printf("%d\t %s\t (%s)\t %0.3f ms\t(%d)\n", responses[i].ttl, responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
+				printf("%d\t%s\t(%s)\t%0.3f ms\t(%d)\n", responses[i].ttl, responses[i].host_name, responses[i].ip, responses[i].rtt, responses[i].num_probes);
 			}
 			else if (responses[i].isReceived == false) {
 				printf("%d\t*\n", i);
