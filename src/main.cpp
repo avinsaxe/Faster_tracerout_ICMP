@@ -21,7 +21,7 @@
 
 #include <chrono>
 #include <cstdint>
-#define MAX_HOPS 35
+#define MAX_HOPS 30
 #define BATCH_MAX_SIZE 10001
 
 
@@ -507,7 +507,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 						char* ip = inet_ntoa(dns_sock.sin_addr);
 						printf("Router IP %s responded with error type %d and error code %d\n",ip,router_icmp_hdr->type,router_icmp_hdr->code);
 						if (router_icmp_hdr->type == ICMP_DEST_UNREACH) {
-							exit(1);
+							return 1;
 						}
 					}
 				}
