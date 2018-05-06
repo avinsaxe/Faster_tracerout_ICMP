@@ -21,7 +21,7 @@
 
 #include <chrono>
 #include <cstdint>
-#define MAX_HOPS 30
+#define MAX_HOPS 35
 #define BATCH_MAX_SIZE 10001
 
 
@@ -58,7 +58,7 @@ map<u_long, int>batch_ip_vs_occurrences;
 map<int,int> batch_timed_bucket_url_count;
 int batch_counts_url_per_hop[MAX_HOPS];
 
-char* batch_ip_with_more_than_30_hops = NULL;
+vector<char*> batch_ip_with_more_than_30_hops;
 
 DWORD batch_start = timeGetTime();
 
@@ -358,9 +358,10 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 		{			
 			case WAIT_TIMEOUT:
 			{
-				if (!check_dns) {//batch mode
+				/*if (!check_dns) {//batch mode
+					in_loop = false;
 					break;
-				}
+				}*/
 				//retransmit all not received packets less than packet sequence at echo reply
 				bool atleast_one_retransmitted = false;
 				//remove everything from the timeouts_interval
@@ -380,24 +381,6 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 					}
 				}
 				in_loop = atleast_one_retransmitted;
-				/*if (check_dns &&  responses[index_of_awaited_packet].isReceived == false && responses[index_of_awaited_packet].num_probes<3 && index_of_awaited_packet<smallest_index_echo_response)
-				{
-					long timeout_expected_for_new_retransmission = getTimeoutForRetransmissionPacket2(index_of_awaited_packet);
-					responses[index_of_awaited_packet].num_probes++;
-					responses[index_of_awaited_packet].time_sent = timeGetTime();
-					Timeouts timeout;
-					timeout.index = index_of_awaited_packet;
-					timeout.timeout = timeout_expected_for_new_retransmission;
-					timeouts_interval.push_back(timeout);
-					//sending part
-					int status = -1;
-
-
-					if (responses[index_of_awaited_packet].isReceived == false)
-					{
-						status = send_icmp_packet(index_of_awaited_packet, sock, remote);
-					}
-				}*/
 				break;
 			}
 			case WAIT_OBJECT_0: 
@@ -409,6 +392,7 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 					return recv;
 				}
 				//first time when ICMP_ECHO_RESPONSE IS RECEIVED, handle it
+
 				if (router_icmp_hdr->code == 0 && (router_icmp_hdr->type == ICMP_ECHO_REPLY || router_icmp_hdr->type == ICMP_TTL_EXPIRED))
 				{
 					if (orig_ip_hdr->proto == IPPROTO_ICMP)
@@ -434,14 +418,6 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 									long elapsedtime = timeGetTime() - batch_start;
 									int id = ceil((double)elapsedtime / 50);
 									//printf("id in time_array == %d", id);
-
-									if (batch_timed_bucket_url_count.find(id) != batch_timed_bucket_url_count.end()) {
-										batch_timed_bucket_url_count[id] = batch_timed_bucket_url_count[id] + 1;
-									}
-									else {
-										batch_timed_bucket_url_count[id] = 1;
-									}
-									return 1;
 								}
 							}
 
@@ -513,13 +489,23 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 										strcpy(ip_copy, ip);
 										thread_updater[orig_icmp_hdr->seq] = thread(thread_get_host_info2, orig_icmp_hdr->seq, ip_copy);
 									}
+								} //if ends here
 
 
-								}
 							}
 
 						}
 
+					}
+				} //outer if
+				else{   //here we will handle errors
+					if (orig_ip_hdr->proto == IPPROTO_ICMP && orig_icmp_hdr->id == ID)  //i.e. protocol is ICMP and id is same
+					{
+						u_long ip_address_of_router = router_ip_hdr->source_ip;
+						sockaddr_in dns_sock;
+						dns_sock.sin_addr.s_addr = ip_address_of_router;
+						char* ip = inet_ntoa(dns_sock.sin_addr);
+						printf("Router IP %s responded with error type %d and error code %d\n",ip,router_icmp_hdr->type,router_icmp_hdr->code);
 					}
 				}
 				WSAResetEvent(event_icmp);
@@ -628,10 +614,10 @@ int main(int argc, char *argv[]){
 		}
 		for (int i = 0; i < BATCH_MAX_SIZE; i++) {
 			reinit();
-			printf("IP* from array %s",destination_ips[i]);
+			//printf("IP* from array %s",destination_ips[i]);
 			string ipstr = convert_char_to_string(destination_ips[i]);
 			char* destination_ip = extract_url(ipstr);
-			printf("IP %s\n", destination_ip);
+			//printf("IP %s\n", destination_ip);
 			bool fetched= fetchServer(destination_ip);
 			if (!fetched) {
 				continue;
@@ -644,25 +630,41 @@ int main(int argc, char *argv[]){
 			for (int ttl = 0; ttl < MAX_HOPS; ttl++) {
 				responses[ttl].num_probes++;
 				responses[ttl].time_sent = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-				//update of future_retx_times
-				//remove all packets from the timeouts_intervals
 				Timeouts timeout;
 				timeout.index = ttl;
-				timeout.timeout = 200;
+				timeout.timeout = 500;
 				timeouts_interval.push_back(timeout);
 				//sending part
 				int status = -1;
 				status = send_icmp_packet(ttl, sock, remote);
 			}
 			receive_icmp_response(sock, remote, false);
-			//printf("[%d] = %d\n",i,smallest_index_echo_response);
+			long timeEl = timeGetTime()-batch_start;
+			
+			printf("[%d] = %d\n",i,smallest_index_echo_response);
+			
+			
 			if (batch_mode_received_echo == true) {
 				batch_counts_url_per_hop[smallest_index_echo_response]++;
 			}			
-			if (smallest_index_echo_response > MAX_HOPS && batch_mode_received_echo==true) {
-				batch_ip_with_more_than_30_hops=(char*)malloc(NI_MAXHOST);
-				printf("~~~~~~~~~~~~~~Found IP with more than 30 hops %s\n",batch_ip_with_more_than_30_hops);
-				strcpy(batch_ip_with_more_than_30_hops, destination_ip);
+			if (smallest_index_echo_response >30 && batch_mode_received_echo==true) {
+				batch_ip_with_more_than_30_hops.push_back(destination_ip);
+				printf("~~~~~~~~~~~~~~Found IP with more than 30 hops %s\n",batch_ip_with_more_than_30_hops.end());
+				//strcpy(batch_ip_with_more_than_30_hops, destination_ip);
+			}
+
+			int time_bucket = ceil((double)timeEl / 50);
+			printf("elapsed time %li and bucket is %d \n", timeEl, time_bucket);
+
+			//if the packet is not received, no point of adding it to the bucket
+			if (batch_mode_received_echo == true) 
+			{
+				if (batch_timed_bucket_url_count.find(time_bucket) != batch_timed_bucket_url_count.end()) {
+					batch_timed_bucket_url_count[time_bucket]++;
+				}
+				else {
+					batch_timed_bucket_url_count[time_bucket] = 1;
+				}
 			}
 			batch_mode_received_echo = false;
 			
@@ -673,8 +675,13 @@ int main(int argc, char *argv[]){
 			printf("Writing hops count\n");
 			myfile << "i = "<<i<<" URLS = "<<batch_counts_url_per_hop[i]<<endl;
 		}
-		if(batch_ip_with_more_than_30_hops!=NULL && strlen(batch_ip_with_more_than_30_hops)>0)
-			myfile << batch_ip_with_more_than_30_hops << endl;
+		if (batch_ip_with_more_than_30_hops.size() > 0) {
+			myfile << "IPs with more than 30 hops" << endl;
+			for (int i = 0; i < batch_ip_with_more_than_30_hops.size(); i++) {
+				myfile <<batch_ip_with_more_than_30_hops[i] << endl;
+			}
+		}
+			
 		myfile.close();		
 
 		myfile.open("output-10k-timewindow.txt");
@@ -688,9 +695,13 @@ int main(int argc, char *argv[]){
 
 		myfile.open("output-10k-unique-url.txt");
 		map <u_long, int> ::iterator itr1;
+		int total_num_routers = 0,unique_routers=0;
 		for (itr1 = batch_ip_vs_occurrences.begin(); itr1 != batch_ip_vs_occurrences.end(); ++itr1)
 		{
-			printf("key=%d value=%d\n", itr1->first, itr1->second);
+			printf("key=%li value=%d\n", itr1->first, itr1->second);
+			
+			total_num_routers += itr1->second;
+			unique_routers += 1;
 			//display only unique ips
 			if (itr1->second == 1)
 			{
@@ -702,6 +713,9 @@ int main(int argc, char *argv[]){
 				myfile << str <<" count "<<itr1->second<< endl;
 			}				
 		}
+		myfile << "Total Routers " << total_num_routers<< endl;
+		myfile << "Unique Routers " << unique_routers << endl;
+
 		myfile.close();		
 	}
 

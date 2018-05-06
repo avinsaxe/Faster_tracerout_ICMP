@@ -4,33 +4,50 @@ i = 2 URLS = 0
 i = 3 URLS = 0
 i = 4 URLS = 0
 i = 5 URLS = 0
-i = 6 URLS = 5
-i = 7 URLS = 7
-i = 8 URLS = 8
-i = 9 URLS = 4
-i = 10 URLS = 399
-i = 11 URLS = 254
-i = 12 URLS = 714
-i = 13 URLS = 379
+i = 6 URLS = 22
+i = 7 URLS = 0
+i = 8 URLS = 0
+i = 9 URLS = 0
+i = 10 URLS = 1646
+i = 11 URLS = 755
+i = 12 URLS = 1949
+i = 13 URLS = 210
 i = 14 URLS = 452
-i = 15 URLS = 470
-i = 16 URLS = 598
-i = 17 URLS = 412
-i = 18 URLS = 467
-i = 19 URLS = 365
-i = 20 URLS = 306
-i = 21 URLS = 279
-i = 22 URLS = 284
-i = 23 URLS = 298
-i = 24 URLS = 355
-i = 25 URLS = 373
-i = 26 URLS = 329
-i = 27 URLS = 247
-i = 28 URLS = 230
-i = 29 URLS = 240
-i = 30 URLS = 224
-i = 31 URLS = 257
-i = 32 URLS = 271
-i = 33 URLS = 738
-i = 34 URLS = 694
-aws.amazon.com
+i = 15 URLS = 289
+i = 16 URLS = 374
+i = 17 URLS = 372
+i = 18 URLS = 379
+i = 19 URLS = 170
+i = 20 URLS = 159
+i = 21 URLS = 216
+i = 22 URLS = 180
+i = 23 URLS = 189
+i = 24 URLS = 257
+i = 25 URLS = 35
+i = 26 URLS = 115
+i = 27 URLS = 7
+i = 28 URLS = 22
+i = 29 URLS = 7
+i = 30 URLS = 5
+i = 31 URLS = 6
+i = 32 URLS = 11
+i = 33 URLS = 0
+i = 34 URLS = 0
+IPs with more than 30 hops
+amazon.co.jp
+amazon.co.jp
+www.yp.scmp.com
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
+www5.fang.com
+amazon.co.jp
+amazon.co.jp
+amazon.co.jp
