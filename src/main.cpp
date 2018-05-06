@@ -390,109 +390,111 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 					return recv;
 				}
 				//first time when ICMP_ECHO_RESPONSE IS RECEIVED, handle it
-				if (router_icmp_hdr->code == 0 && (router_icmp_hdr->type == ICMP_ECHO_REPLY || router_icmp_hdr->type == ICMP_TTL_EXPIRED))
+				if ((router_icmp_hdr->type == ICMP_ECHO_REPLY || router_icmp_hdr->type == ICMP_TTL_EXPIRED))
 				{
-					if (orig_ip_hdr->proto == IPPROTO_ICMP)
+					if (router_icmp_hdr->code == 0) 
 					{
-						//batch mode
-						if (!check_dns) {
-							if (router_icmp_hdr->type == ICMP_ECHO_REPLY) 
+						if (orig_ip_hdr->proto == IPPROTO_ICMP)
+						{
+							//batch mode
+							if (!check_dns) 
 							{
-								if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived) 
+								if (router_icmp_hdr->type == ICMP_ECHO_REPLY)
 								{
-									batch_mode_received_echo = true;
-									u_long ip=router_ip_hdr->source_ip;
-									if (batch_ip_vs_occurrences.find(ip) != batch_ip_vs_occurrences.end()) {
-										batch_ip_vs_occurrences[ip]++;
-									}
-									else {
-										batch_ip_vs_occurrences[ip]=1;
-									}
-									smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
-									responses[router_icmp_hdr->seq].isReceived = true;
-									
-									//time in milliseconds. Bin size is 50 ms
-									long elapsedtime = timeGetTime() - batch_start;
-									int id = ceil((double)elapsedtime / 50);
-									//printf("id in time_array == %d", id);
-								}
-							}
+									if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived)
+									{
+										batch_mode_received_echo = true;
+										u_long ip = router_ip_hdr->source_ip;
+										if (batch_ip_vs_occurrences.find(ip) != batch_ip_vs_occurrences.end()) {
+											batch_ip_vs_occurrences[ip]++;
+										}
+										else {
+											batch_ip_vs_occurrences[ip] = 1;
+										}
+										smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
+										responses[router_icmp_hdr->seq].isReceived = true;
 
-							else {
-								if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false) {
-									u_long ip = router_ip_hdr->source_ip;
-									if (batch_ip_vs_occurrences.find(ip) != batch_ip_vs_occurrences.end()) {
-										batch_ip_vs_occurrences[ip]++;
+										//time in milliseconds. Bin size is 50 ms
+										long elapsedtime = timeGetTime() - batch_start;
+										int id = ceil((double)elapsedtime / 50);
+										//printf("id in time_array == %d", id);
 									}
-									else {
-										batch_ip_vs_occurrences[ip]=1;
+								}
+								else {
+									if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false) {
+										u_long ip = router_ip_hdr->source_ip;
+										if (batch_ip_vs_occurrences.find(ip) != batch_ip_vs_occurrences.end()) {
+											batch_ip_vs_occurrences[ip]++;
+										}
+										else {
+											batch_ip_vs_occurrences[ip] = 1;
+										}
+										responses[orig_icmp_hdr->seq].isReceived = true;
 									}
-									responses[orig_icmp_hdr->seq].isReceived = true;
 								}
 							}
-						}
-						else {
-							//handle ICMP ECHO REPLY
-							if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
-								if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived) {
-									smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
-									u_long ip_address_of_router = router_ip_hdr->source_ip;
-									sockaddr_in dns_sock;
-									dns_sock.sin_addr.s_addr = ip_address_of_router;
-									char* ip = inet_ntoa(dns_sock.sin_addr);
-									//Ping_Results ping_result;
-									responses[router_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-									responses[router_icmp_hdr->seq].ttl = router_icmp_hdr->seq;  //sequence number of packet sent
-									responses[router_icmp_hdr->seq].rtt = ((double)(responses[router_icmp_hdr->seq].time_received - responses[router_icmp_hdr->seq].time_sent) / (1e3));
-									responses[router_icmp_hdr->seq].isReceived = true;
-									responses[router_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
-									strcpy(responses[router_icmp_hdr->seq].ip, ip);
-									found_new = true;
-									if (check_dns) {
-										/*if (thread_updater[router_icmp_hdr->seq].joinable())
-										{
+							else
+							{
+								//not in batch mode
+								//handle ICMP ECHO REPLY
+								if (router_icmp_hdr->type == ICMP_ECHO_REPLY) {
+									if (router_icmp_hdr->id == ID && !responses[router_icmp_hdr->seq].isReceived) {
+										smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
+										u_long ip_address_of_router = router_ip_hdr->source_ip;
+										sockaddr_in dns_sock;
+										dns_sock.sin_addr.s_addr = ip_address_of_router;
+										char* ip = inet_ntoa(dns_sock.sin_addr);
+										//Ping_Results ping_result;
+										responses[router_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+										responses[router_icmp_hdr->seq].ttl = router_icmp_hdr->seq;  //sequence number of packet sent
+										responses[router_icmp_hdr->seq].rtt = ((double)(responses[router_icmp_hdr->seq].time_received - responses[router_icmp_hdr->seq].time_sent) / (1e3));
+										responses[router_icmp_hdr->seq].isReceived = true;
+										responses[router_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
+										strcpy(responses[router_icmp_hdr->seq].ip, ip);
+										found_new = true;
+										if (check_dns) {
+											/*if (thread_updater[router_icmp_hdr->seq].joinable())
+											{
 											thread_updater[router_icmp_hdr->seq].join();
-										}*/
-										char *ip_copy = (char*)malloc(NI_MAXHOST);
-										strcpy(ip_copy, ip);
-										thread_updater[router_icmp_hdr->seq] = thread(thread_get_host_info2, router_icmp_hdr->seq, ip_copy);
+											}*/
+											char *ip_copy = (char*)malloc(NI_MAXHOST);
+											strcpy(ip_copy, ip);
+											thread_updater[router_icmp_hdr->seq] = thread(thread_get_host_info2, router_icmp_hdr->seq, ip_copy);
+										}
+
 									}
+								}
+								else  //when not in batch mode
+								{
+									if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false)
+									{
+										u_long ip_address_of_router = router_ip_hdr->source_ip;
+										sockaddr_in dns_sock;
+										dns_sock.sin_addr.s_addr = ip_address_of_router;
+										char* ip = inet_ntoa(dns_sock.sin_addr);
+										//Ping_Results ping_result;
+										responses[orig_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
+										responses[orig_icmp_hdr->seq].ttl = orig_icmp_hdr->seq;  //sequence number of packet sent
+										responses[orig_icmp_hdr->seq].rtt = ((double)(responses[orig_icmp_hdr->seq].time_received - responses[orig_icmp_hdr->seq].time_sent) / (1e3));
+										responses[orig_icmp_hdr->seq].isReceived = true;
+										responses[orig_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
+										strcpy(responses[orig_icmp_hdr->seq].ip, ip);
+										found_new = true;
+										if (check_dns) {
+											/*if (thread_updater[orig_icmp_hdr->seq].joinable())
+											{
+											thread_updater[orig_icmp_hdr->seq].join();
+											}*/
+
+											char *ip_copy = (char*)malloc(NI_MAXHOST);
+											strcpy(ip_copy, ip);
+											thread_updater[orig_icmp_hdr->seq] = thread(thread_get_host_info2, orig_icmp_hdr->seq, ip_copy);
+										}
+									} //if ends here
 
 								}
 							}
-							else  //when not in batch mode
-							{
-								if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false)
-								{
-									u_long ip_address_of_router = router_ip_hdr->source_ip;
-									sockaddr_in dns_sock;
-									dns_sock.sin_addr.s_addr = ip_address_of_router;
-									char* ip = inet_ntoa(dns_sock.sin_addr);
-									//Ping_Results ping_result;
-									responses[orig_icmp_hdr->seq].time_received = std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::high_resolution_clock::now().time_since_epoch()).count();
-									responses[orig_icmp_hdr->seq].ttl = orig_icmp_hdr->seq;  //sequence number of packet sent
-									responses[orig_icmp_hdr->seq].rtt = ((double)(responses[orig_icmp_hdr->seq].time_received - responses[orig_icmp_hdr->seq].time_sent) / (1e3));
-									responses[orig_icmp_hdr->seq].isReceived = true;
-									responses[orig_icmp_hdr->seq].ip = (char*)malloc(NI_MAXHOST);
-									strcpy(responses[orig_icmp_hdr->seq].ip, ip);
-									found_new = true;
-									if (check_dns) {
-										/*if (thread_updater[orig_icmp_hdr->seq].joinable())
-										{
-											thread_updater[orig_icmp_hdr->seq].join();
-										}*/
-
-										char *ip_copy = (char*)malloc(NI_MAXHOST);
-										strcpy(ip_copy, ip);
-										thread_updater[orig_icmp_hdr->seq] = thread(thread_get_host_info2, orig_icmp_hdr->seq, ip_copy);
-									}
-								} //if ends here
-
-
-							}
-
 						}
-
 					}
 				} //outer if
 				else{   //here we will handle errors
