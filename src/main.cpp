@@ -22,7 +22,7 @@
 #include <chrono>
 #include <cstdint>
 #define MAX_HOPS 35
-#define BATCH_MAX_SIZE 100
+#define BATCH_MAX_SIZE 10001
 
 
 //href:// Notes from classes, hw2 pdf
@@ -48,6 +48,7 @@ static bool can_end_on_timeout = false;
 static int smallest_index_echo_response = MAX_HOPS-1;
 static bool batch_mode_received_echo = false;
 int total_sent = 0;
+struct sockaddr_in remote;
 
 //these are times in milliseconds
 double per_hop_timeout = 0;
@@ -99,9 +100,9 @@ Timeouts get_root_from_min_heap() {
 
 //works correctly
 //href:// taken from my code in hw2
-sockaddr_in fetchServer(char* host)
+bool fetchServer(char* host)
 {
-	struct sockaddr_in remote;
+	
 	memset(&remote, 0, sizeof(struct sockaddr_in));	
 	in_addr addr;
 	char *hostAddr;
@@ -116,8 +117,9 @@ sockaddr_in fetchServer(char* host)
 		}
 		else if (host_ent == NULL)
 		{
-			printf("Host Ent is null. Unable to fetch server\n");
-			return remote;
+			printf("Host Ent is null. Unable to fetch server %d\n",WSAGetLastError());
+
+			return false;
 		}
 		//cout << inet_ntoa(addr)<<endl;
 		
@@ -127,7 +129,7 @@ sockaddr_in fetchServer(char* host)
 	}
 	remote.sin_family = AF_INET;
 	remote.sin_port = htons(80);
-	return remote;
+	return true;
 }
 
 
@@ -326,18 +328,17 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 	ICMPHeader *router_icmp_hdr = (ICMPHeader *)(router_ip_hdr + 1);
 	IPHeader *orig_ip_hdr = (IPHeader *)(router_icmp_hdr + 1);
 	ICMPHeader *orig_icmp_hdr = (ICMPHeader *)(orig_ip_hdr + 1);
+	
 	while (true) 
 	{		
 		if (timeouts_interval.size() == 0) {
 			printf("No elements to wait\n");
 			return 1;
 		}		
-
 		//setup retransmission timeout
 		update_min_timeout_for_not_received_packet();
 		DWORD retx_timeout = (DWORD)(t.timeout);  //timeout in milliseconds
 		//printf("Retransmission timeout %d \n", retx_timeout);
-
 
 		int totalSizeOnSelect = WSAEventSelect(sock,event_icmp,FD_READ);
 		if (totalSizeOnSelect == SOCKET_ERROR) {
@@ -396,11 +397,11 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 									u_long ip=router_ip_hdr->source_ip;
 									if (batch_ip_vs_occurrences.find(ip) != batch_ip_vs_occurrences.end()) {
 										batch_ip_vs_occurrences[ip]++;
-										printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
+										//printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
 									}
 									else {
 										batch_ip_vs_occurrences[ip]=1;
-										printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
+										//printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
 									}
 									smallest_index_echo_response = min(router_icmp_hdr->seq, smallest_index_echo_response);
 									responses[router_icmp_hdr->seq].isReceived = true;
@@ -408,30 +409,31 @@ int receive_icmp_response(SOCKET sock, struct sockaddr_in remote,bool check_dns)
 									//time in milliseconds. Bin size is 50 ms
 									long elapsedtime = timeGetTime() - batch_start;
 									int id = ceil((double)elapsedtime / 50);
-									printf("id in time_array == %d", id);
+									//printf("id in time_array == %d", id);
 
 									if (batch_timed_bucket_url_count.find(id) != batch_timed_bucket_url_count.end()) {
 										batch_timed_bucket_url_count[id] = batch_timed_bucket_url_count[id] + 1;
-										printf("ID %d Count %d\n", id, batch_timed_bucket_url_count[id]);
+										//printf("ID %d Count %d\n", id, batch_timed_bucket_url_count[id]);
 									}
 									else {
 										batch_timed_bucket_url_count[id] = 1;
-										printf("ID %d Count %d\n", id, batch_timed_bucket_url_count[id]);
+										//printf("ID %d Count %d\n", id, batch_timed_bucket_url_count[id]);
 									}
 
 									return 0; 
 								}
 							}
+
 							else {
 								if (orig_icmp_hdr->id == ID && responses[orig_icmp_hdr->seq].isReceived == false) {
 									u_long ip = router_ip_hdr->source_ip;
 									if (batch_ip_vs_occurrences.find(ip) != batch_ip_vs_occurrences.end()) {
 										batch_ip_vs_occurrences[ip]++;
-										printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
+										//printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
 									}
 									else {
 										batch_ip_vs_occurrences[ip]=1;
-										printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
+										//printf("IP %ul Count %d\n", ip, batch_ip_vs_occurrences[ip]);
 									}
 									responses[orig_icmp_hdr->seq].isReceived = true;
 								}
@@ -622,14 +624,23 @@ int main(int argc, char *argv[]){
 			WSACleanup();
 			return 1;
 		}
+		index = 0;
 		while (in) {
-			in.getline(destination_ips[index++],NI_MAXHOST);
+			in.getline(destination_ips[index++],100000);
 		}
-		for (int i = 0; i < 10; i++) {
+
+
+
+		for (int i = 0; i < BATCH_MAX_SIZE; i++) {
 			reinit();
+			printf("IP* from array %s",destination_ips[i]);
 			string ipstr = convert_char_to_string(destination_ips[i]);
 			char* destination_ip = extract_url(ipstr);
-			struct sockaddr_in remote = fetchServer(destination_ip);
+			printf("IP %s\n", destination_ip);
+			bool fetched= fetchServer(destination_ip);
+			if (!fetched) {
+				continue;
+			}
 			//************MAKE THE HEAP FOR TIMEOUTS********************
 			//line that makes a min heap
 			std::make_heap(timeouts_interval.begin(), timeouts_interval.end(), GREATER());
@@ -649,7 +660,9 @@ int main(int argc, char *argv[]){
 			}
 			receive_icmp_response(sock, remote, false);
 			printf("[%d] = %d\n",i,smallest_index_echo_response);
-			batch_counts_url_per_hop[smallest_index_echo_response]++;
+			if (batch_mode_received_echo == true) {
+				batch_counts_url_per_hop[smallest_index_echo_response]++;
+			}			
 			if (smallest_index_echo_response > 30 && batch_mode_received_echo==true) {
 				batch_ip_with_more_than_30_hops=(char*)malloc(NI_MAXHOST);
 				printf("~~~~~~~~~~~~~~Found IP with more than 30 hops %s\n",batch_ip_with_more_than_30_hops);
@@ -705,7 +718,10 @@ int main(int argc, char *argv[]){
 		char* destination_ip = argv[1];
 		string ipstr = convert_char_to_string(destination_ip);
 		destination_ip = extract_url(ipstr);
-		struct sockaddr_in remote = fetchServer(destination_ip);
+		bool fetched = fetchServer(destination_ip);
+		if (!fetched) {
+			return 1;
+		}
 		sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 		if (sock == INVALID_SOCKET)
 		{
